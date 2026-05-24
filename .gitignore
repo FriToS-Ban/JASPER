@@ -1,0 +1,10 @@
+__pycache__/
+*.db
+*cache*
+.env
+*.egg-info
+test.ipynb
+credentials.json
+.venv
+data
+.pytest_artifacts

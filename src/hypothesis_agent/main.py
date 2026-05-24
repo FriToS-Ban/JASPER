@@ -1,0 +1,94 @@
+"""FastAPI application entrypoint for the JASPER hypothesis agent."""
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from starlette.responses import Response
+
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from hypothesis_agent.api.router import api_router
+from hypothesis_agent.api.ui import ui_router
+from hypothesis_agent.config import AppSettings, get_settings
+from hypothesis_agent.logging import configure_logging
+from hypothesis_agent.metrics import record_request_metrics
+from hypothesis_agent.repositories.hypothesis_repository import (
+    HypothesisRepository,
+    InMemoryHypothesisRepository,
+)
+from hypothesis_agent.services.hypothesis_service import HypothesisService
+from hypothesis_agent.telemetry import RequestContextMiddleware
+from hypothesis_agent.workflows.hypothesis_workflow import HypothesisWorkflowClient
+
+
+def _make_request_recorder(enabled: bool):
+    def _record(request: Request, response: Response, latency: float) -> None:
+        if not enabled:
+            return
+        route = request.scope.get("path") or request.url.path
+        record_request_metrics(request.method, route, response.status_code, latency)
+
+    return _record
+
+
+def create_app(settings: AppSettings | None = None) -> FastAPI:
+    """Instantiate and configure the FastAPI application."""
+
+    app_settings = settings or get_settings()
+    configure_logging(app_settings.log_level)
+
+    repository = InMemoryHypothesisRepository()
+    
+    # Always use the LangGraph-based workflow client
+    workflow_client = HypothesisWorkflowClient(
+        namespace="default",
+        task_queue="jasper-hypothesis",
+        workflow="HypothesisValidationWorkflow",
+        address="localhost:7233",
+    )
+    hypothesis_service = HypothesisService(
+        repository=repository,
+        workflow_client=workflow_client,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.settings = app_settings
+        app.state.workflow_client = workflow_client
+        app.state.hypothesis_repository = repository
+        app.state.hypothesis_service = hypothesis_service
+        try:
+            yield
+        finally:
+            await workflow_client.close()
+
+    application = FastAPI(
+        title="JASPER Hypothesis Validation API",
+        version="0.1.0",
+        description="Accepts hypotheses for validation and orchestrates the JASPER workflow.",
+        lifespan=lifespan,
+    )
+    application.add_middleware(
+        RequestContextMiddleware,
+        recorder=_make_request_recorder(app_settings.enable_prometheus),
+    )
+
+    application.include_router(ui_router)
+    application.include_router(api_router, prefix=app_settings.api_prefix)
+
+    # Expose core components immediately for compatibility with existing tests and tooling.
+    application.state.settings = app_settings
+    application.state.workflow_client = workflow_client
+    application.state.hypothesis_repository = repository
+    application.state.hypothesis_service = hypothesis_service
+
+    if app_settings.enable_prometheus:
+        @application.get("/metrics")
+        async def metrics_endpoint() -> Response:
+            return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    return application
+
+
+app = create_app()
