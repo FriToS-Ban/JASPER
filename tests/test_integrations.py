@@ -26,13 +26,13 @@ def test_yfinance_toolset_initialization() -> None:
 def test_settings_read_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Environment variables should populate application settings."""
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-nvidia")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
 
     get_settings.cache_clear()  # type: ignore[attr-defined]
     settings = get_settings()
 
-    assert settings.openai_api_key == "test-openai"
+    assert settings.nvidia_api_key == "test-nvidia"
     assert settings.log_level == "DEBUG"
 
     get_settings.cache_clear()  # type: ignore[attr-defined]

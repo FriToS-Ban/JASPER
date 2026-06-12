@@ -217,7 +217,10 @@ async def test_pipeline_stages_execute(stub_orchestrator) -> None:
     context = delivery_stage["context"]
     milestones.append(delivery_stage["milestone"])
 
-    pdf_path = Path(context["report"]["pdf_path"].replace("file://", ""))
+    import urllib.request
+    from urllib.parse import urlparse
+    pdf_path_str = context["report"]["pdf_path"]
+    pdf_path = Path(urllib.request.url2pathname(urlparse(pdf_path_str).path))
     assert pdf_path.exists()
     fetch_slugs = {call["slug"] for call in toolset.invocations if call["slug"].startswith("YFINANCE")}
     assert "YFINANCE_HISTORICAL_PRICES" in fetch_slugs

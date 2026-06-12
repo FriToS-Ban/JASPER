@@ -16,5 +16,5 @@ async def test_landing_page_served(test_app) -> None:
         response = await client.get("/")
 
     assert response.status_code == 200
-    assert "RAVEN Hypothesis Studio" in response.text
+    assert "JASPER Hypothesis Studio" in response.text
     assert "hypothesis-form" in response.text
