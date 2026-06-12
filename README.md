@@ -80,7 +80,7 @@ Clone the repository and set up a Python virtual environment:
 
 ```bash
 # Clone the repository
-git clone https://github.com/ayushsi42/raven.git jasper
+git clone https://github.com/FriToS-Ban/JASPER.git jasper
 cd jasper
 
 # Create and activate virtual environment
