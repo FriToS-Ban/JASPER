@@ -37,8 +37,32 @@ probes estimate generalisation:
 | Held-out set (blind; never tuned) | 6/8 | Both misses are `INSUFFICIENT_EVIDENCE` abstentions ("less profitable", "carrying more debt"), not wrong directional calls. |
 | Core set, offline (in-sample) | 18/18 | 0 contradicted or unsupported figures; 18/18 runs reproducible from disk; 7 plan revisions; caveat recall 89%. |
 
-The pattern matters: when the deterministic parser does not understand a hypothesis, it abstains
-rather than guessing a direction. The LLM planner (`--llm nvidia`) is the intended remedy for
+### Live-LLM subset (6 cases, one per category)
+
+Generator `nvidia/nemotron-3.5-lightning-30b-a3b` (planning proposals, up to 2 tool choices per
+iteration, critique, narrative); blind rubric judge `minimaxai/minimax-m3.1-flash`; commit `b8b1167`.
+Cases: NVDA-01, TSLA-01, AAPL-01, META-01, AMZN-01, DIS-01. Each case took 4.6-8.8 minutes.
+
+| Measure | Result |
+|---|---|
+| Verdicts within acceptable range | 6/6 (all exact) |
+| Claims extracted from LLM text | 325: 280 verified, 12 partially verified, 7 not verifiable, 26 flagged |
+| Flagged claims after manual triage | **4 genuine LLM errors**: one unit error repeated twice (AMZN wrote "-105.93%" for a ratio of -105.93, i.e. -10,593%), and two verdict overstatements (AMZN and DIS wrote "not supported" where the evidence verdict was partially supported / insufficient evidence). The other 22 were checker misreads, fixed in commit `f46c9f0` and re-checked against the saved evidence. |
+| LLM-chosen tool calls | 26, all validated and logged |
+| Plan revisions / human-review escalations | 7 / 3 (AAPL, META, AMZN: the LLM critic raised high-severity issues) |
+| Blind LLM judge (1-5) | logical coherence 4 in all cases; verdict justification 4-5; metric relevance 3-5 |
+
+`results.json` for this run was scored with the pre-fix checker (hence 26 flags and lower coherence
+scores). Runs from `f46c9f0` onward also save `research_state.json`, so later checker changes can
+re-score them without new LLM calls. The remaining 12 core cases have not been run with the LLM.
+
+Takeaways: the rule-based verdict held under an LLM in the loop; the verifier caught real LLM
+mistakes that read plausibly (a unit error, a verdict overstated); and the LLM critic escalates
+to human review more often than the deterministic critic (3 of 6 cases), which may need a
+stricter threshold.
+
+The pattern in the offline probes matters too: when the deterministic parser does not understand a
+hypothesis, it abstains rather than guessing a direction. The LLM planner (`--llm nvidia`) is the intended remedy for
 coverage; its proposals are validated before use.
 
 ## Reproducing

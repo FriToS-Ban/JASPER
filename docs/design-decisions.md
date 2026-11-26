@@ -99,8 +99,14 @@ category. Rubric judges are reported alongside deterministic scores, never inste
 - Expected benchmark conclusions were written by the same developer who built the rules, from the
   same frozen data. In-sample offline accuracy is therefore an optimistic upper bound; the
   held-out result is the honest estimate.
-- Claim extraction is pattern-based. Unusual phrasing can produce `NOT_VERIFIABLE` claims or
-  attach a number to the wrong metric; citations reduce this because they pin the comparison.
+- Claim extraction is pattern-based. On the first live-LLM run, 22 of 26 flagged claims were
+  checker misreads of free-form prose (fixed and covered by regression tests); new phrasings will
+  still produce some false flags. Citations reduce this because they pin the comparison, and a
+  flag always shows the sentence and the evidence so a reviewer can judge it.
+- The LLM critic escalated to human review in 3 of 6 live cases; its severity threshold may need
+  tightening.
+- Relative trends for amounts measured from a near-zero base (e.g. quarterly free cash flow)
+  produce extreme percentages; they are correct arithmetic but easy to misread.
 - Yahoo Finance offers roughly four annual periods, no segment data, and undisclosed
   methodology for TTM ratios. These limits are stated in every report.
 - No causal controls (peers, macro, FX, M&A) are applied; associations are descriptive.
