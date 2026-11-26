@@ -208,7 +208,9 @@ def get_metric(key: str) -> MetricDefinition:
         ("_trend", "trend", None),
     ):
         if key.endswith(suffix):
-            base = METRICS.get(key[: -len(suffix)])
+            base_key = key[: -len(suffix)]
+            # Variants can stack, e.g. total_revenue_growth_yoy_trend (trend of a growth rate).
+            base = METRICS.get(base_key) or (get_metric(base_key) if suffix in {"_trend", "_change"} and is_known_metric(base_key) else None)
             if base is None:
                 break
             resolved_unit = unit or ("ratio_points" if base.unit == "ratio" else base.unit)
@@ -239,7 +241,8 @@ def metric_category(key: str) -> str:
         definition = get_metric(key)
     except KeyError:
         return "unknown"
-    if key.endswith(("_growth_yoy", "_growth_qoq", "_cagr")):
+    stripped = key[: -len("_trend")] if key.endswith("_trend") else key[: -len("_change")] if key.endswith("_change") else key
+    if stripped.endswith(("_growth_yoy", "_growth_qoq", "_cagr")):
         return "growth"
     return definition.category
 
@@ -263,7 +266,7 @@ def raw_dependencies(key: str) -> List[str]:
     """Return the raw metrics a (possibly derived) metric ultimately depends on."""
 
     for suffix in ("_growth_yoy", "_growth_qoq", "_cagr", "_change", "_trend"):
-        if key.endswith(suffix) and key[: -len(suffix)] in METRICS:
+        if key.endswith(suffix) and is_known_metric(key[: -len(suffix)]):
             return raw_dependencies(key[: -len(suffix)])
     if key in RATIO_RECIPES:
         numerator, denominator, _, _ = RATIO_RECIPES[key]

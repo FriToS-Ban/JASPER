@@ -18,7 +18,7 @@ class AppSettings(BaseSettings):
     
     # Required API keys
     nvidia_api_key: str | None = None
-    nvidia_model: str = "meta/llama-3.1-70b-instruct"
+    nvidia_model: str = "mistralai/mistral-large-4-1t-a52b"
     
     # LLM provider: "nvidia" (NVIDIA NIM, requires NVIDIA_API_KEY) or "offline" (deterministic
     # template narrator; no network, no key).

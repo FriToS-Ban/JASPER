@@ -492,7 +492,10 @@ class HypothesisWorkflowClient:
         include_human: bool | None = None,
     ) -> List[WorkflowMilestone]:
         include = include_human if include_human is not None else (
-            local_run.hypothesis.requires_human_review or milestone.name == "human_review"
+            local_run.hypothesis.requires_human_review
+            or milestone.name == "human_review"
+            # the research agent can also escalate to review, so keep an existing review milestone in order
+            or any(existing.name == "human_review" for existing in local_run.summary.milestones)
         )
         order = self._stage_sequence(include)
         milestone_map = {existing.name: existing for existing in local_run.summary.milestones}

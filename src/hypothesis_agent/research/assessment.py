@@ -148,6 +148,16 @@ def assess_expectation(expectation: Expectation, registry: EvidenceRegistry, tic
             caveats.append(f"The latest period was {latest_step}, but {window_text} as a whole was {overall}.")
     else:
         status = "NEUTRAL"
+    if latest_step == "flat" and overall != "flat" and len(steps) > 1:
+        caveats.append(f"The latest period was flat after a {overall} path, which may indicate stabilisation.")
+    earlier = [r for r in series if start is not None and (r.period_year or 0) < start]
+    if earlier:
+        reference = max(earlier, key=lambda r: r.value) if wanted == "increasing" else min(earlier, key=lambda r: r.value)
+        relation = "below" if window_series[-1].value < reference.value else "above"
+        caveats.append(
+            f"Before the stated window, {label} was {_fmt(reference.value, unit)} in {short_period(reference)}; "
+            f"the latest value remains {relation} that level."
+        )
     trend = next((r for r in registry.find(ticker=ticker, metric=f"{expectation.metric}_trend")
                   if r.period_start == window_series[0].period_end and r.period_end == window_series[-1].period_end), None)
     evidence_ids = [r.evidence_id for r in window_series] + ([trend.evidence_id] if trend else [])

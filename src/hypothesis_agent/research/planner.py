@@ -109,7 +109,7 @@ PROFITABILITY_COMPONENTS = ["operating_margin", "net_income"]
 CONCEPTS: List[Tuple[str, str]] = [
     (r"financially (?:healthier|stronger|weaker)|financial (?:health|position|strength)|balance[- ]sheet health", "@health"),
     (r"free[- ]cash[- ]flow(?: generation)?|\bfcf\b", "free_cash_flow"),
-    (r"cash conversion", "cash_conversion"),
+    (r"cash conversion|(?:its )?(?:net income|earnings|profits?) into (?:operating )?cash", "cash_conversion"),
     (r"operating cash flows?|cash from operations", "operating_cash_flow"),
     (r"gross margins?", "gross_margin"),
     (r"net (?:profit )?margins?|profit margins?", "net_margin"),
@@ -145,13 +145,16 @@ UNMEASURABLE = [
 INCREASE_WORDS = [
     r"improv\w*", r"expan\w+", r"ris(?:e|es|ing)", r"increas\w*", r"grow(?:s|ing|n)?\b", r"stronger",
     r"strengthen\w*", r"higher", r"recover\w*", r"accelerat\w*", r"healthier", r"scal(?:e|es|ing)\b",
-    r"\bstrong\b", r"robust", r"solid", r"climb\w*", r"\bup\b", r"widen\w*",
+    r"\bstrong\b", r"robust", r"solid", r"climb\w*", r"\bup\b", r"widen\w*", r"\bmore of\b", r"\bheavy\b",
 ]
 DECREASE_WORDS = [
     r"deteriorat\w*", r"declin\w*", r"fall(?:s|ing)?\b", r"fell", r"shrink\w*", r"contract\w*", r"weaker",
     r"weakening", r"lower", r"slow\w*", r"decelerat\w*", r"compress\w*", r"worsen\w*", r"\bdown\b",
-    r"narrow\w*", r"erod\w*", r"drop\w*", r"decreas\w*",
+    r"narrow\w*", r"erod\w*", r"drop\w*", r"decreas\w*", r"under pressure", r"pressured", r"squeez\w*",
+    r"\bless of\b",
 ]
+OVERVALUED_WORDS = r"\b(?:over[- ]?valued|over[- ]?priced|expensive|richly valued|stretched valuation)\b"
+UNDERVALUED_WORDS = r"\b(?:under[- ]?valued|under[- ]?priced|cheap|inexpensive|attractively valued|bargain)\b"
 LEVEL_ABOVE = [(r"double[- ]digit", 0.10), (r"\bstrong\b|robust|rapid|high", 0.10)]
 NEGATIONS = r"(?:not|no longer|never|isn't|aren't|hasn't|haven't)\s+(?:\w+\s+)?$"
 NUMBER_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
@@ -193,7 +196,7 @@ def _parse_window(text: str) -> Tuple[_Window, str]:
 
 
 _CONNECTOR = re.compile(
-    r"\s*(?:;|,?\s+\b(but|while|whereas|although|though|yet|despite|and|as|with)\b)\s+"
+    r"\s*(?:;|,?\s+\b(but|while|whereas|although|though|yet|despite|even as|even though|and|as|with)\b)\s+"
 )
 
 
@@ -279,15 +282,16 @@ def parse_hypothesis(text: str) -> Tuple[List[Expectation], Dict[str, Any]]:
         meta["forward_looking"] = True
 
     # Valuation relative to growth.
-    valuation = re.search(r"\b(over|under)[- ]?valued\b", working)
+    valuation = re.search(OVERVALUED_WORDS, working) or re.search(UNDERVALUED_WORDS, working)
     if valuation:
-        direction: Direction = "overvalued" if valuation.group(1) == "over" else "undervalued"
+        direction: Direction = "overvalued" if re.fullmatch(OVERVALUED_WORDS, valuation.group(0)) else "undervalued"
         add(group="G-valuation", concept="valuation relative to earnings growth", metric="peg_computed",
             direction=direction, threshold=None,
             rationale="Compare P/E with historical EPS growth (PEG); >2 suggests rich valuation, <1 cheap.",
             phrase=valuation.group(0))
         working = working.replace(valuation.group(0), " ")
-        working = re.sub(r"relative to (?:its )?(?:historical )?(?:earnings|eps) growth", " ", working)
+        working = re.sub(r"\bvaluation\b|\blooks\b|\bappears\b", " ", working)
+        working = re.sub(r"relative to (?:how fast )?(?:its )?(?:historical )?(?:earnings|eps)(?: growth| have grown| has grown)?", " ", working)
 
     # Favourable comparison base.
     base = re.search(r"comparison (?:base|period)|base effect|easy comp\w*|weak (?:(?:fy\s?)?\d{4} )?(?:base|comparison)", working)

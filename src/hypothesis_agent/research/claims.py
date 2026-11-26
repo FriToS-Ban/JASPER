@@ -609,8 +609,13 @@ class ClaimVerifier:
         notes = [n for n in [best.note] if n]
         family = METRIC_FAMILY.get(primary_metric, [primary_metric])
         cited_other_metric = from_citation and best.metric not in family and best.metric != primary_metric
-        if cited_other_metric and self._sentence_names_metric(claim.text, best.metric):
-            cited_other_metric = False  # e.g. "PEG ratio" wording citing a peg_computed record
+        if cited_other_metric and level == "exact" and self._sentence_names_metric(claim.text, best.metric):
+            # The sentence names the cited metric and the cited value matches: the citation, not the
+            # nearest keyword, identifies the metric (e.g. "Cash conversion (OCF / net income) was 57%").
+            cited_other_metric = False
+            claim.metric = best.metric
+            claim.category = CATEGORY_BY_METRIC_CATEGORY.get(metric_category(best.metric), "other")
+            primary_metric = best.metric
         exact_primary = level == "exact" and best.metric == primary_metric
         if level == "exact" and (best.is_latest or claim.period_year is not None or from_citation or len(pool) == 1):
             claim.status = "VERIFIED" if ((exact_primary or from_citation) and not cited_other_metric) else "PARTIALLY_VERIFIED"

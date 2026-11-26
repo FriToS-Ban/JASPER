@@ -163,8 +163,9 @@ class ResearchAgent:
             key = f"{tool}|{json.dumps(args, sort_keys=True)}"
             if key in computed:
                 return
-            toolbox.invoke(tool, args, origin="agent", rationale=rationale)
-            computed.append(key)
+            result = toolbox.invoke(tool, args, origin="agent", rationale=rationale)
+            if result.status in {"ok", "skipped"}:
+                computed.append(key)  # failed computations are retried once new data arrives
 
         ticker = plan.ticker
         for planned in plan.metrics:

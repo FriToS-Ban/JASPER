@@ -113,6 +113,8 @@ class NvidiaLLM(BaseLLM):
         self._client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=self.api_key,
+            timeout=180.0,
+            max_retries=2,
         )
         if self.telemetry is None:
             self.telemetry = PIPELINE_TELEMETRY
@@ -318,11 +320,11 @@ class NvidiaLLM(BaseLLM):
                     response = self._client.chat.completions.create(**kwargs)
                     latency = time.perf_counter() - start_time
                 except Exception as retry_exc:  # pragma: no cover - network failures
-                    raise LLMError("OpenAI request failed") from retry_exc
+                    raise LLMError(f"LLM request failed ({self.model}): {type(retry_exc).__name__}: {retry_exc}") from retry_exc
             else:
-                raise LLMError("OpenAI request failed") from exc
+                raise LLMError(f"LLM request failed ({self.model}): {type(exc).__name__}: {exc}") from exc
         except Exception as exc:  # pragma: no cover - network failures
-            raise LLMError("OpenAI request failed") from exc
+            raise LLMError(f"LLM request failed ({self.model}): {type(exc).__name__}: {exc}") from exc
 
         try:
             message = response.choices[0].message.content or ""
