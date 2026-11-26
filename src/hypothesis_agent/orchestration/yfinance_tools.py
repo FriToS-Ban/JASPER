@@ -1,9 +1,96 @@
 """Yahoo Finance tools for financial data retrieval using yfinance library."""
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Protocol
 
 import yfinance as yf
+
+YFINANCE_VERSION = getattr(yf, "__version__", "unknown")
+
+# Fields copied verbatim from ``yfinance.Ticker(symbol).info``. Additional fields were added for
+# source attribution (currency, fiscal period markers) and valuation/leverage checks.
+COMPANY_INFO_FIELDS = (
+    "shortName",
+    "longName",
+    "sector",
+    "industry",
+    "website",
+    "longBusinessSummary",
+    "currency",
+    "financialCurrency",
+    "marketCap",
+    "enterpriseValue",
+    "trailingPE",
+    "forwardPE",
+    "trailingEps",
+    "forwardEps",
+    "pegRatio",
+    "trailingPegRatio",
+    "priceToBook",
+    "profitMargins",
+    "operatingMargins",
+    "grossMargins",
+    "ebitdaMargins",
+    "revenueGrowth",
+    "earningsGrowth",
+    "earningsQuarterlyGrowth",
+    "returnOnAssets",
+    "returnOnEquity",
+    "totalRevenue",
+    "ebitda",
+    "freeCashflow",
+    "operatingCashflow",
+    "totalDebt",
+    "totalCash",
+    "debtToEquity",
+    "currentRatio",
+    "quickRatio",
+    "beta",
+    "sharesOutstanding",
+    "targetHighPrice",
+    "targetLowPrice",
+    "targetMeanPrice",
+    "recommendationKey",
+    "numberOfAnalystOpinions",
+    "currentPrice",
+    "previousClose",
+    "mostRecentQuarter",
+    "lastFiscalYearEnd",
+)
+
+
+def describe_retrieval(slug: str, arguments: Dict[str, Any]) -> str:
+    """Return the exact yfinance call a tool slug performs, for source attribution."""
+
+    symbol = arguments.get("symbol", "?")
+    quarterly = bool(arguments.get("quarterly", False))
+    base = f"yfinance.Ticker({symbol!r})"
+    if slug == "YFINANCE_HISTORICAL_PRICES":
+        params = [f"period={arguments.get('period', '1y')!r}", f"interval={arguments.get('interval', '1d')!r}"]
+        return f"{base}.history({', '.join(params)})"
+    attribute = {
+        "YFINANCE_COMPANY_INFO": "info",
+        "YFINANCE_FINANCIALS": "quarterly_financials" if quarterly else "financials",
+        "YFINANCE_BALANCE_SHEET": "quarterly_balance_sheet" if quarterly else "balance_sheet",
+        "YFINANCE_CASH_FLOW": "quarterly_cashflow" if quarterly else "cashflow",
+        "YFINANCE_EARNINGS": "earnings / quarterly_earnings",
+        "YFINANCE_RECOMMENDATIONS": "recommendations",
+        "YFINANCE_NEWS": "news",
+        "YFINANCE_HOLDERS": "major_holders / institutional_holders",
+        "YFINANCE_DIVIDENDS": "dividends",
+        "YFINANCE_SPLITS": "splits",
+        "YFINANCE_OPTIONS": "options",
+    }.get(slug, slug)
+    return f"{base}.{attribute}"
+
+
+def _finite_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 class ToolHandle(Protocol):
@@ -63,40 +150,12 @@ class YFinanceTool:
         """Get company overview information."""
         ticker = self._get_ticker(payload)
         info = ticker.info
-        return [
-            {
-                "symbol": payload.get("symbol"),
-                "shortName": info.get("shortName"),
-                "longName": info.get("longName"),
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-                "website": info.get("website"),
-                "longBusinessSummary": info.get("longBusinessSummary"),
-                "marketCap": info.get("marketCap"),
-                "enterpriseValue": info.get("enterpriseValue"),
-                "trailingPE": info.get("trailingPE"),
-                "forwardPE": info.get("forwardPE"),
-                "profitMargins": info.get("profitMargins"),
-                "operatingMargins": info.get("operatingMargins"),
-                "grossMargins": info.get("grossMargins"),
-                "revenueGrowth": info.get("revenueGrowth"),
-                "earningsGrowth": info.get("earningsGrowth"),
-                "returnOnAssets": info.get("returnOnAssets"),
-                "returnOnEquity": info.get("returnOnEquity"),
-                "totalRevenue": info.get("totalRevenue"),
-                "totalDebt": info.get("totalDebt"),
-                "totalCash": info.get("totalCash"),
-                "targetHighPrice": info.get("targetHighPrice"),
-                "targetLowPrice": info.get("targetLowPrice"),
-                "targetMeanPrice": info.get("targetMeanPrice"),
-                "recommendationKey": info.get("recommendationKey"),
-                "numberOfAnalystOpinions": info.get("numberOfAnalystOpinions"),
-                "52WeekHigh": info.get("fiftyTwoWeekHigh"),
-                "52WeekLow": info.get("fiftyTwoWeekLow"),
-                "currentPrice": info.get("currentPrice"),
-                "previousClose": info.get("previousClose"),
-            }
-        ]
+        record: Dict[str, Any] = {"symbol": payload.get("symbol")}
+        for key in COMPANY_INFO_FIELDS:
+            record[key] = info.get(key)
+        record["52WeekHigh"] = info.get("fiftyTwoWeekHigh")
+        record["52WeekLow"] = info.get("fiftyTwoWeekLow")
+        return [record]
 
     def _get_historical_prices(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Get historical price data."""
@@ -110,15 +169,16 @@ class YFinanceTool:
         records = []
         for date in hist.index:
             date_str = date.strftime("%Y-%m-%d")
+            volume = _finite_or_none(hist.loc[date, "Volume"]) if "Volume" in hist.columns else None
             records.append({
                 "date": date_str,
-                "open": float(hist.loc[date, "Open"]) if "Open" in hist.columns else None,
-                "high": float(hist.loc[date, "High"]) if "High" in hist.columns else None,
-                "low": float(hist.loc[date, "Low"]) if "Low" in hist.columns else None,
-                "close": float(hist.loc[date, "Close"]) if "Close" in hist.columns else None,
-                "volume": int(hist.loc[date, "Volume"]) if "Volume" in hist.columns else None,
+                "open": _finite_or_none(hist.loc[date, "Open"]) if "Open" in hist.columns else None,
+                "high": _finite_or_none(hist.loc[date, "High"]) if "High" in hist.columns else None,
+                "low": _finite_or_none(hist.loc[date, "Low"]) if "Low" in hist.columns else None,
+                "close": _finite_or_none(hist.loc[date, "Close"]) if "Close" in hist.columns else None,
+                "volume": int(volume) if volume is not None else None,
             })
-        
+
         return records
 
     def _get_financials(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -251,6 +311,19 @@ class YFinanceTool:
         result = []
         if news:
             for item in news[:15]:  # Extended to 15 news items
+                # yfinance>=0.2.50 nests article fields under "content"; older versions are flat.
+                content = item.get("content") if isinstance(item.get("content"), dict) else None
+                if content is not None:
+                    provider = content.get("provider") or {}
+                    canonical = content.get("canonicalUrl") or {}
+                    result.append({
+                        "title": content.get("title"),
+                        "publisher": provider.get("displayName") if isinstance(provider, dict) else None,
+                        "link": canonical.get("url") if isinstance(canonical, dict) else None,
+                        "providerPublishTime": content.get("pubDate"),
+                        "type": content.get("contentType"),
+                    })
+                    continue
                 result.append({
                     "title": item.get("title"),
                     "publisher": item.get("publisher"),
@@ -258,7 +331,7 @@ class YFinanceTool:
                     "providerPublishTime": item.get("providerPublishTime"),
                     "type": item.get("type"),
                 })
-        
+
         return result
 
     def _get_holders(self, payload: Dict[str, Any]) -> Dict[str, Any]:
