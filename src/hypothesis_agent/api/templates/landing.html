@@ -758,14 +758,14 @@
     <section class="insight-panel hidden" id="insight-panel">
       <div class="metric-grid">
         <div class="metric-card">
-          <div class="metric-label">Score</div>
+          <div class="metric-label">Verdict (rule-based)</div>
           <div class="metric-value" id="metric-score">&mdash;</div>
           <div class="metric-subtext" id="metric-conclusion">Pending validation</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Confidence</div>
+          <div class="metric-label">Data completeness</div>
           <div class="metric-value" id="metric-confidence">&mdash;</div>
-          <div class="metric-subtext">Probability-weighted conviction</div>
+          <div class="metric-subtext" id="metric-claims">Metrics collected / requested (not a probability)</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Current Stage</div>
@@ -871,8 +871,10 @@
     const stageLabels = {
       plan_generation: 'Plan Generation',
       data_collection: 'Data Generation',
-      hybrid_analysis: 'Hybrid Analysis',
-      detailed_analysis: 'Detailed Analysis',
+      hybrid_analysis: 'Quantitative Analysis',
+      critique: 'Critique',
+      detailed_analysis: 'Narrative',
+      claim_verification: 'Claim Verification',
       report_generation: 'Report Generation',
       human_review: 'Human Review',
       delivery: 'Delivery',
@@ -882,7 +884,9 @@
       'plan_generation',
       'data_collection',
       'hybrid_analysis',
+      'critique',
       'detailed_analysis',
+      'claim_verification',
       'report_generation',
       'delivery',
     ];
@@ -1079,10 +1083,18 @@
       }
 
       if (dashboard.metricScore) {
-        dashboard.metricScore.textContent = formatPercent(validation.score);
+        dashboard.metricScore.textContent = validation.verdict
+          ? validation.verdict.replaceAll('_', ' ').toLowerCase()
+          : formatPercent(validation.score);
       }
       if (dashboard.metricConfidence) {
         dashboard.metricConfidence.textContent = formatPercent(validation.confidence);
+      }
+      const claimsNode = document.getElementById('metric-claims');
+      if (claimsNode && validation.claim_verification) {
+        const counts = validation.claim_verification;
+        const flagged = (counts.UNSUPPORTED ?? 0) + (counts.CONTRADICTED ?? 0);
+        claimsNode.textContent = `Claims verified: ${counts.VERIFIED ?? 0}; flagged: ${flagged}`;
       }
       if (dashboard.metricConclusion) {
         dashboard.metricConclusion.textContent = validation.conclusion ?? 'Pending validation';

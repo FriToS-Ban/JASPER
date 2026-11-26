@@ -183,11 +183,22 @@ class ResearchToolbox:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def describe_tools(self) -> List[Dict[str, Any]]:
-        return [
-            {"name": spec.name, "description": spec.description, "parameters": spec.args_model.model_json_schema()}
-            for spec in self.specs.values()
-        ]
+    def describe_tools(self, compact: bool = False) -> List[Dict[str, Any]]:
+        if not compact:
+            return [
+                {"name": spec.name, "description": spec.description, "parameters": spec.args_model.model_json_schema()}
+                for spec in self.specs.values()
+            ]
+        described = []
+        for spec in self.specs.values():
+            params = {}
+            for name, field in spec.args_model.model_fields.items():
+                annotation = getattr(field.annotation, "__args__", None)
+                choices = [a for a in annotation if isinstance(a, str)] if annotation else []
+                params[name] = ("|".join(choices) if choices else getattr(field.annotation, "__name__", str(field.annotation))) + \
+                    ("" if field.is_required() else f" (default {field.default})")
+            described.append({"name": spec.name, "description": spec.description, "parameters": params})
+        return described
 
     @property
     def calls_made(self) -> int:

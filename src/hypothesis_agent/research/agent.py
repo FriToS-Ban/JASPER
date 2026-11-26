@@ -228,7 +228,7 @@ class ResearchAgent:
                 "hypothesis": plan.hypothesis,
                 "ticker": plan.ticker,
                 "expectations": [e.model_dump(include={"expectation_id", "metric", "direction", "concept"}) for e in plan.expectations],
-                "tools": toolbox.describe_tools(),
+                "tools": toolbox.describe_tools(compact=True),
                 "available_metrics": registry.metrics_available(plan.ticker),
                 "recent_tool_calls": summarise_tool_log(state["tool_calls"]),
                 "remaining_calls": self.limits.max_tool_calls - toolbox.calls_made,
