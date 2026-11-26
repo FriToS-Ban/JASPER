@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import List, Literal
+from typing import Any, Dict, List, Literal
 from uuid import UUID, uuid4
 
 from pydantic import AnyUrl, BaseModel, Field
@@ -51,6 +51,7 @@ class MilestoneStatus(str, Enum):
     WAITING_REVIEW = "waiting_review"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
+    SKIPPED = "skipped"
 
 
 class WorkflowMilestone(BaseModel):
@@ -62,11 +63,40 @@ class WorkflowMilestone(BaseModel):
 
 
 class ValidationSummary(BaseModel):
-    """Summary placeholder for validation outcomes."""
+    """Summary of a validation run.
 
-    score: float = Field(..., ge=0.0, le=1.0, description="Validation score normalized between 0 and 1.")
+    ``score`` and ``confidence`` are kept for API compatibility but are no longer model opinions:
+    ``score`` is the rule-based evidence score behind the verdict and ``confidence`` is the share
+    of requested metrics actually collected. Neither is a probability.
+    """
+
+    score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Evidence score: mean over concept groups of SUPPORTS=1 ... CONTRADICTS=0 (rule-based, not a probability).",
+    )
     conclusion: str = Field(..., description="High-level status of the hypothesis validation.")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Model confidence for the reported conclusion.")
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Data completeness: metrics collected / metrics requested (a count ratio, not a probability).",
+    )
+    verdict: str | None = Field(
+        default=None,
+        description="SUPPORTED | PARTIALLY_SUPPORTED | NOT_SUPPORTED | INSUFFICIENT_EVIDENCE (rule-based).",
+    )
+    claim_verification: Dict[str, int] | None = Field(
+        default=None, description="Counts of generated claims by verification status."
+    )
+    uncertainty: Dict[str, Any] | None = Field(
+        default=None, description="Compact structured uncertainty summary (see the PDF for the full assessment)."
+    )
+    research_iterations: int | None = Field(default=None, description="Number of critique iterations executed.")
+    human_review_reason: str | None = Field(
+        default=None, description="Why the research agent escalated to human review, if it did."
+    )
     evidence: List[EvidenceReference] = Field(default_factory=list, description="Evidence artifacts supporting the conclusion.")
     current_stage: str = Field(
         default="pending",

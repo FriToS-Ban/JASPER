@@ -25,10 +25,15 @@ _PIPELINE_STAGES: List[str] = [
     "plan_generation",
     "data_collection",
     "hybrid_analysis",
+    "critique",
     "detailed_analysis",
+    "claim_verification",
     "report_generation",
     "delivery",
 ]
+# Defence in depth: the research router is bounded by its own iteration limits, but the client
+# also refuses to execute more than this many stages for one workflow.
+_MAX_STAGE_EXECUTIONS = 40
 
 
 @dataclass(slots=True)
@@ -333,14 +338,23 @@ class HypothesisWorkflowClient:
 
         context = local_run.context
 
-        for stage in _PIPELINE_STAGES[:-2]:
+        # Follow the research router: critique may loop back to data collection or analysis, and
+        # claim verification may send the narrative back for correction, within bounded limits.
+        stage: str | None = "plan_generation"
+        executed = 0
+        while stage is not None and stage not in {"human_review", "delivery"}:
+            executed += 1
+            if executed > _MAX_STAGE_EXECUTIONS:
+                self._handle_stage_failure(
+                    key, stage, RuntimeError(f"Stage budget of {_MAX_STAGE_EXECUTIONS} executions exhausted.")
+                )
+                return
             context = await self._run_single_stage(key, orchestrator, stage, hypothesis, context)
             if context is None:
                 return
-
-        context = await self._run_single_stage(key, orchestrator, "report_generation", hypothesis, context)
-        if context is None:
-            return
+            if stage == "report_generation":
+                break
+            stage = orchestrator.next_stage(stage, hypothesis, context)
 
         summary_after_report = self._local_runs[key].summary
         self._local_runs[key].report_milestone = next(
@@ -348,7 +362,7 @@ class HypothesisWorkflowClient:
             None,
         )
 
-        if hypothesis.requires_human_review:
+        if hypothesis.requires_human_review or orchestrator.human_review_requested(context):
             self._prepare_human_review(key, summary_after_report)
             self._tasks.pop(key, None)
             return
@@ -494,10 +508,11 @@ class HypothesisWorkflowClient:
         local_run = self._local_runs.get(key)
         if local_run is None:
             return
+        reason = ((local_run.context.get("research") or {}).get("human_review") or {}).get("reason")
         human_milestone = WorkflowMilestone(
             name="human_review",
             status=MilestoneStatus.WAITING_REVIEW,
-            detail="Awaiting human reviewer decision.",
+            detail=f"Awaiting human reviewer decision. Agent escalation: {reason}" if reason else "Awaiting human reviewer decision.",
         )
         milestones = self._merge_milestone(local_run, human_milestone, include_human=True)
         summary = summary_base.model_copy(
