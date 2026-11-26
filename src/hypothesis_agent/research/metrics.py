@@ -163,7 +163,7 @@ _DEFINITIONS: List[MetricDefinition] = [
     _m("pe_computed", "P/E (price / latest FY diluted EPS)", "x", "valuation", "derived", (), (), "Share Price / Diluted EPS", None),
     _m("peg_computed", "PEG (P/E / EPS growth %)", "x", "valuation", "derived", (), (), "P/E / (EPS growth x 100)", None),
     _m("price_return", "Price return", "ratio", "price_performance", "derived", (), ("share price return", "stock return", "price return", "stock is up", "shares rose", "shares fell"), "Close(end) / Close(start) - 1", True),
-    _m("annualized_volatility", "Annualised volatility", "ratio", "price_performance", "derived", (), ("volatility",), "stdev(daily log returns) x sqrt(252)", False),
+    _m("annualized_volatility", "Annualised volatility", "ratio", "price_performance", "derived", (), ("annualized volatility", "annualised volatility", "price volatility", "stock volatility", "share price volatility"), "stdev(daily log returns) x sqrt(252)", False),
     _m("max_drawdown", "Maximum drawdown", "ratio", "price_performance", "derived", (), ("drawdown", "max drawdown"), "min(Close / running max Close) - 1", False),
     _m("close_price", "Closing price", "USD/share", "price_performance", "price_history", ("close",), ("closing price",)),
 ]

@@ -400,6 +400,7 @@ class ResearchAgent:
                                         iteration_limit_hit=bool(state.get("iteration_limit_hit")))
         state["uncertainty"] = uncertainty.model_dump(mode="json")
         self._save(state, plan, registry, workflow_id)
+        self.artifact_store.write_json(workflow_id, "research_state", {k: v for k, v in state.items() if k != "registry"})
         manifest = reproducibility_manifest(state, registry)
         self.artifact_store.write_json(workflow_id, "reproducibility_manifest", manifest)
         return state["uncertainty"]

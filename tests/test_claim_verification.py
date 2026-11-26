@@ -125,3 +125,45 @@ def test_repeated_sentences_are_verified_once(registry: EvidenceRegistry) -> Non
 def test_negative_values_reported_as_losses(registry: EvidenceRegistry) -> None:
     claim, _ = _one(registry, "Capital expenditure was $8 billion in FY2025.")  # stored as -8B outflow
     assert claim.status == "VERIFIED"
+
+
+# Regression tests for misreads found when verifying real LLM narratives (6-case live benchmark).
+def _statuses(registry: EvidenceRegistry, text: str, verdict: str = "PARTIALLY_SUPPORTED"):
+    report = verify_text({"narrative": text}, registry, "TEST", verdict=verdict)
+    return [(c.category, c.metric, c.status) for c in report.claims]
+
+
+def test_growth_noun_is_not_a_direction_claim(registry: EvidenceRegistry) -> None:
+    assert _statuses(registry, "Revenue growth data is unavailable for quarterly validation.") == []
+
+
+def test_verdict_labels_with_underscores_and_component_statements(registry: EvidenceRegistry) -> None:
+    claims = _statuses(registry, "The overall verdict is PARTIALLY_SUPPORTED, with the margin component contradicted.")
+    assert claims == [("verdict", None, "VERIFIED")]
+    assert _statuses(registry, "The hypothesis' central claim of slowing revenue growth is not supported by the data.") == []
+    assert _statuses(registry, "Therefore, the hypothesis is not supported.") == [("verdict", None, "CONTRADICTED")]
+
+
+def test_stated_year_range_is_compared_endpoint_to_endpoint(registry: EvidenceRegistry) -> None:
+    assert _statuses(registry, "Operating margin rose from FY2022 to FY2025.") == [("trend", "operating_margin", "VERIFIED")]
+    assert _statuses(registry, "Operating cash flow improved from FY2023 to FY2025.") == [("trend", "operating_cash_flow", "CONTRADICTED")]
+
+
+def test_numbers_attach_to_the_metric_named_before_them_and_keep_their_sign(registry: EvidenceRegistry) -> None:
+    text = ("Free cash flow fell from $9.5 billion in FY2023 to $7 billion in FY2024, a 26.3% drop despite "
+            "an operating margin of 14% in FY2024.")
+    claims = _statuses(registry, text)
+    assert ("growth", "free_cash_flow_growth_yoy", "VERIFIED") in claims
+    assert ("margin", "operating_margin", "VERIFIED") in claims
+    assert all(status == "VERIFIED" for _, _, status in claims)
+    assert _statuses(registry, "Operating margin expanded 6.0 percentage points from FY2022 to FY2025.") == [
+        ("margin", "operating_margin_change", "VERIFIED")]
+
+
+def test_bookkeeping_numbers_are_not_financial_claims(registry: EvidenceRegistry) -> None:
+    assert _statuses(registry, "Primary evidence score for operating margin (G1) is 0.00.") == []
+
+
+def test_direction_words_go_to_the_nearest_metric(registry: EvidenceRegistry) -> None:
+    claims = _statuses(registry, "Rising revenue and falling free cash flow point to a divergence.")
+    assert claims == [("trend", "total_revenue", "VERIFIED"), ("trend", "free_cash_flow", "VERIFIED")]

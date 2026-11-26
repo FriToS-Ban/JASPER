@@ -59,20 +59,93 @@ NEGATIVE_WORDS = r"loss|negative|deficit|outflow|burn"
 APPROX_WORDS = r"(?:about|approximately|roughly|nearly|around|almost|~|circa|some)\s*$"
 GREATER_WORDS = r"(?:more than|over|above|exceed\w*|greater than|at least)\s*$"
 LESS_WORDS = r"(?:less than|under|below|at most)\s*$"
-FRAMING = r"\b(?:hypothes\w+|thesis|we test\w*|tested whether|claims? that|predicts?|would|could|might|may|if)\b"
+# Sentences that describe the test rather than assert facts about the data: no direction claims.
+FRAMING = (
+    r"\b(?:hypothes\w+|thesis|we test\w*|tested whether|claims? that|predicts?|would|could|might|may|if|"
+    r"expectations?|assessments?|status|classified|score|verdict)\b"
+)
+# Numbers preceded by these words are bookkeeping (scores, statuses), not financial figures.
+NON_FINANCIAL_NUMBER = r"\b(?:score|status|iteration|attempt)\b|\(g\d+\)|\bh\d+\b"
+RANGE = re.compile(
+    r"(?:from|between)\s+(?:fy|fiscal(?: year)?\s?)?((?:19|20)\d\d)\s+(?:to|and|through|until)\s+(?:fy|fiscal(?: year)?\s?)?((?:19|20)\d\d)"
+    r"|(?:fy\s?)?((?:19|20)\d\d)\s*[-–—]\s*(?:fy\s?)?((?:19|20)\d\d)",
+    re.IGNORECASE,
+)
+def metric_family(metric: str) -> List[str]:
+    """Metrics that may legitimately back a claim about ``metric``.
+
+    For ratio metrics, a "change" between two periods and a "trend" over the same window are the
+    same quantity (last minus first), so either record can back the claim.
+    """
+
+    family = list(METRIC_FAMILY.get(metric, [metric]))
+    if metric.endswith("_change"):
+        family.append(metric[: -len("_change")] + "_trend")
+    return family
+
+
+ANNUAL_COUNTERPART = {"quarterly_revenue_growth_yoy": "total_revenue_growth_yoy", "quarterly_earnings_growth_yoy": "net_income_growth_yoy"}
 QUALITATIVE = (
     r"market share|competitive|competition|moat|management|brand|demand|pipeline|guidance|strategy|"
     r"customers?|regulat\w+|macro\w*|innovation|ecosystem|leadership|execution|sentiment|outlook"
 )
-INCREASE = r"\b(?:improv\w*|expand\w*|rose|ris(?:e|es|ing)|increas\w*|grew|grow\w*|strengthen\w*|higher|recover\w*|accelerat\w*|widen\w*|climb\w*)\b"
+# "growth" (the noun) is deliberately not an increase word: "revenue growth data is unavailable"
+# asserts nothing about direction.
+INCREASE = r"\b(?:improv\w*|expand\w*|rose|ris(?:e|es|ing)|increas\w*|grew|grow(?:s|ing|n)?|strengthen\w*|higher|recover\w*|accelerat\w*|widen\w*|climb\w*)\b"
 DECREASE = r"\b(?:deteriorat\w*|declin\w*|fell|fall\w*|shr[iu]nk\w*|shrank|contract\w*|weaken\w*|lower|slow\w*|decelerat\w*|compress\w*|worsen\w*|narrow\w*|erod\w*|drop\w*|decreas\w*)\b"
 
+# Checked in this order; labels may be written with underscores (PARTIALLY_SUPPORTED).
 VERDICT_PATTERNS = [
-    (r"\b(?:not supported|unsupported|contradicted|rejected|refuted|does not hold|is not borne out)\b", "NOT_SUPPORTED"),
     (r"\bpartially supported|partly supported|mixed support|partial support\b", "PARTIALLY_SUPPORTED"),
     (r"\binsufficient evidence|inconclusive|cannot be (?:confirmed|determined|evaluated)\b", "INSUFFICIENT_EVIDENCE"),
+    (r"\b(?:not supported|unsupported|rejected|refuted|does not hold|is not borne out)\b", "NOT_SUPPORTED"),
     (r"\b(?:is|are|remains|appears) (?:well[- ]|strongly |fully )?supported\b|\bconfirmed\b", "SUPPORTED"),
 ]
+EXPLICIT_VERDICT = re.compile(r"\bverdict\b\W*(?:is|of|was|:)?\W*(partially supported|insufficient evidence|not supported|supported)\b")
+COMPONENT_STATEMENT = re.compile(r"\b(?:claim|component|aspect|element|portion|part) of\b|\bcharacteri[sz]ation\b")
+
+
+def _verdict_statement(lowered: str) -> Optional[str]:
+    """Return the overall verdict a sentence asserts, ignoring statements about one component."""
+
+    text = lowered.replace("_", " ")
+    explicit = EXPLICIT_VERDICT.search(text)
+    if explicit:
+        return explicit.group(1).upper().replace(" ", "_")
+    if not re.search(r"\b(?:hypothes\w+|thesis|conclusion)\b", text) or COMPONENT_STATEMENT.search(text):
+        return None
+    for pattern, verdict in VERDICT_PATTERNS:
+        if re.search(pattern, text):
+            return verdict
+    return None
+
+
+def _assign_directions(lowered: str, mentions: Sequence["_Mention"]) -> Dict[int, str]:
+    """Give each direction word to its nearest metric mention (modifiers before the metric first)."""
+
+    words = [(m.start(), m.end(), "increase") for m in re.finditer(INCREASE, lowered)]
+    words += [(m.start(), m.end(), "decrease") for m in re.finditer(DECREASE, lowered)]
+    words = [w for w in words if not any(m.start <= w[0] < m.end for m in mentions)]
+    pairs = []
+    for m_index, mention in enumerate(mentions):
+        for w_index, (w_start, w_end, direction) in enumerate(words):
+            if w_end <= mention.start:
+                penalty = mention.start - w_end
+                if penalty > 30:
+                    continue
+            else:
+                penalty = w_start - mention.end + 6
+                if penalty - 6 > 40 or penalty < 6:
+                    continue
+            pairs.append((penalty, m_index, w_index, direction))
+    assigned: Dict[int, str] = {}
+    used: set = set()
+    for _, m_index, w_index, direction in sorted(pairs):
+        if m_index in assigned or w_index in used:
+            continue
+        assigned[m_index] = direction
+        used.add(w_index)
+    return assigned
 
 
 class Claim(BaseModel):
@@ -86,6 +159,7 @@ class Claim(BaseModel):
     reported_unit: Optional[str] = None
     comparator: Literal["eq", "approx", "gt", "lt"] = "eq"
     period_year: Optional[int] = None
+    period_start_year: Optional[int] = Field(default=None, description="Set when the text states a range, e.g. FY2022 to FY2025.")
     direction: Optional[str] = None
     cited_evidence: List[str] = Field(default_factory=list)
     expected_value: Optional[float] = None
@@ -255,6 +329,24 @@ def _nearest(items: Sequence[Any], position: int, *, before_window: int, after_w
     return best
 
 
+BASE_PERIOD = re.compile(r"(?:versus|vs\.?|compared (?:with|to)|relative to|against|from)\s*$")
+
+
+def _year_for(years: Sequence[Tuple[int, int, int]], number: Dict[str, Any], lowered: str) -> Optional[Tuple[int, int, int]]:
+    """Year a figure refers to.
+
+    Comparison bases ("versus FY2024", "from FY2022") are never the figure's own period. A year
+    written right after the figure ("$7B in FY2024", "41.4% (FY2025)") wins over an earlier one.
+    """
+
+    candidates = [y for y in years if not BASE_PERIOD.search(lowered[max(0, y[0] - 20): y[0]])]
+    immediate = [y for y in candidates if 0 <= y[0] - number["end"] <= 10
+                 and re.fullmatch(r"\s*(?:\(|in|for|during|at|,)?\s*", lowered[number["end"]: y[0]])]
+    if immediate:
+        return immediate[0]
+    return _nearest(candidates, number["start"], before_window=60, after_window=45, key=lambda y: (y[0], y[1]))
+
+
 def extract_claims(sections: Dict[str, str]) -> List[Claim]:
     claims: List[Claim] = []
 
@@ -275,22 +367,33 @@ def extract_claims(sections: Dict[str, str]) -> List[Claim]:
             numbers = _numbers(clean, years)
             lowered = clean.lower()
             framing = re.search(FRAMING, lowered) is not None
+            range_match = RANGE.search(clean)
+            year_range = None
+            if range_match:
+                bounds = [int(g) for g in range_match.groups() if g]
+                year_range = (bounds[0], bounds[1])
 
-            for verdict_pattern, verdict in VERDICT_PATTERNS:
-                if re.search(r"\b(?:hypothes\w+|thesis|verdict|conclusion)\b", lowered) and re.search(verdict_pattern, lowered):
-                    claims.append(Claim(claim_id=new_id(), section=section, text=sentence, category="verdict",
-                                        reported_text=verdict, direction=verdict))
-                    break
+            verdict = _verdict_statement(lowered)
+            if verdict:
+                claims.append(Claim(claim_id=new_id(), section=section, text=sentence, category="verdict",
+                                    reported_text=verdict, direction=verdict))
 
             numeric_metrics: List[str] = []
             for number in numbers:
+                if re.search(NON_FINANCIAL_NUMBER, lowered[max(0, number["start"] - 60): number["start"]]):
+                    continue
                 compatible = [m for m in mentions if _compatible(number["kind"], m.metric)]
-                mention = _nearest(compatible, number["start"], before_window=90, after_window=40)
+                # "41.4% operating margin": a metric named right after the number wins; otherwise the
+                # metric named before it; a later mention only when nothing precedes.
+                following = [m for m in compatible if 0 <= m.start - number["end"] <= 12]
+                mention = following[0] if following else (
+                    _nearest([m for m in compatible if m.end <= number["start"]], number["start"], before_window=140, after_window=0)
+                    or _nearest(compatible, number["start"], before_window=0, after_window=40))
                 local_cites = _citations_for(sentence, number["end"], numbers, citations)
                 if mention is None and local_cites and len(numbers) > 1:
                     # No metric name nearby, but the figure carries its own citation: the cited
                     # record defines the metric (resolved during verification).
-                    year = _nearest(years, number["start"], before_window=60, after_window=45, key=lambda y: (y[0], y[1]))
+                    year = _year_for(years, number, lowered)
                     claims.append(Claim(
                         claim_id=new_id(), section=section, text=sentence, category="cited", metric=None,
                         reported_text=number["text"], reported_value=number["value"], reported_unit=number["kind"],
@@ -314,7 +417,13 @@ def extract_claims(sections: Dict[str, str]) -> List[Claim]:
                     metric = f"{metric}_change"
                 if re.search(r"\bttm\b|trailing twelve|trailing 12", lowered) and metric in TTM_VARIANT:
                     metric = TTM_VARIANT[metric]
-                year = _nearest(years, number["start"], before_window=60, after_window=45, key=lambda y: (y[0], y[1]))
+                if metric in ANNUAL_COUNTERPART and re.match(r"\s*(?:annual|annually|yearly|full[- ]year)", lowered[number["end"]:number["end"] + 20]):
+                    metric = ANNUAL_COUNTERPART[metric]  # "65.5% annual growth" after a quarterly mention
+                year = _year_for(years, number, lowered)
+                period_year = year[2] if year else None
+                start_year = None
+                if metric.endswith(("_change", "_cagr")) and year_range:
+                    start_year, period_year = year_range  # "6 points from FY2022 to FY2025" spans the range
                 prefix = lowered[max(0, number["start"] - 25): number["start"]]
                 comparator = "eq"
                 if re.search(APPROX_WORDS, prefix):
@@ -325,33 +434,32 @@ def extract_claims(sections: Dict[str, str]) -> List[Claim]:
                     comparator = "lt"
                 cited = _citations_for(sentence, number["end"], numbers, citations)
                 value = number["value"]
-                if metric.split("_growth")[0] in METRICS and re.search(DECREASE, context) and value > 0 and metric.endswith("_growth_yoy"):
-                    value = -value  # "revenue fell 5%" -> growth of -5%
+                near = lowered[max(0, number["start"] - 30): number["start"]] + " " + lowered[number["end"]: number["end"] + 12]
+                if value > 0 and metric.endswith(("_growth_yoy", "_change", "_cagr")) and re.search(DECREASE, near):
+                    value = -value  # "revenue fell 5%", "a 14.7% drop", "declined 20 percentage points"
                 claims.append(Claim(
                     claim_id=new_id(), section=section, text=sentence,
                     category=CATEGORY_BY_METRIC_CATEGORY.get(metric_category(metric), "other"),
                     metric=metric, reported_text=number["text"], reported_value=value,
-                    reported_unit=number["kind"], comparator=comparator,
-                    period_year=year[2] if year else None, cited_evidence=cited, tolerance=number["step"],
+                    reported_unit=number["kind"], comparator=comparator, period_year=period_year,
+                    period_start_year=start_year, cited_evidence=cited, tolerance=number["step"],
                 ))
                 numeric_metrics.append(mention.metric)
 
             if not framing:
-                for mention in mentions:
-                    if mention.metric in numeric_metrics:
+                directions = _assign_directions(lowered, mentions)
+                for m_index, mention in enumerate(mentions):
+                    direction = directions.get(m_index)
+                    if direction is None or mention.metric in numeric_metrics:
                         continue
-                    window = lowered[max(0, mention.start - 30): mention.end + 40]
-                    direction = None
-                    if re.search(INCREASE, window):
-                        direction = "increase"
-                    if re.search(DECREASE, window):
-                        direction = "decrease" if direction is None else "ambiguous"
-                    if direction in {None, "ambiguous"}:
-                        continue
-                    year = _nearest(years, mention.start, before_window=60, after_window=45, key=lambda y: (y[0], y[1]))
+                    if year_range:
+                        start_year, end_year = year_range
+                    else:
+                        year = _nearest(years, mention.start, before_window=60, after_window=45, key=lambda y: (y[0], y[1]))
+                        start_year, end_year = None, (year[2] if year else None)
                     claims.append(Claim(
                         claim_id=new_id(), section=section, text=sentence, category="trend",
-                        metric=mention.metric, direction=direction, period_year=year[2] if year else None,
+                        metric=mention.metric, direction=direction, period_year=end_year, period_start_year=start_year,
                         cited_evidence=citations,
                     ))
                     numeric_metrics.append(mention.metric)
@@ -481,7 +589,7 @@ class ClaimVerifier:
         return out
 
     def _candidates(self, metric: str, cited: Sequence[EvidenceRecord]) -> Tuple[List[_Candidate], bool]:
-        family = METRIC_FAMILY.get(metric, [metric])
+        family = metric_family(metric)
         cited_match = [r for r in cited if r.metric in family or r.metric == metric]
         if cited_match:
             return [self._record_candidate(r) for r in cited_match], True
@@ -594,6 +702,14 @@ class ClaimVerifier:
                 claim.missing_evidence = f"{get_metric(claim.metric).label} for FY{claim.period_year}"
                 return claim
             pool = in_period
+            if claim.period_start_year is not None:
+                spanning = [c for c in pool if c.period.startswith(f"FY{claim.period_start_year}")]
+                if not spanning:
+                    claim.status = "UNSUPPORTED"
+                    claim.reason = prefix + f"No {get_metric(claim.metric).label} evidence spanning FY{claim.period_start_year} to FY{claim.period_year}."
+                    claim.missing_evidence = f"{get_metric(claim.metric).label} FY{claim.period_start_year}-FY{claim.period_year}"
+                    return claim
+                pool = spanning
         scored = []
         for candidate in pool:
             reported, expected = self._comparable(claim, candidate)
@@ -607,7 +723,7 @@ class ClaimVerifier:
         claim.matched_evidence = best.evidence_ids
         claim.calculation = best.calculation
         notes = [n for n in [best.note] if n]
-        family = METRIC_FAMILY.get(primary_metric, [primary_metric])
+        family = metric_family(primary_metric)
         cited_other_metric = from_citation and best.metric not in family and best.metric != primary_metric
         if cited_other_metric and level == "exact" and self._sentence_names_metric(claim.text, best.metric):
             # The sentence names the cited metric and the cited value matches: the citation, not the
@@ -656,6 +772,19 @@ class ClaimVerifier:
         wanted = "increasing" if claim.direction == "increase" else "decreasing"
         opposite = "decreasing" if wanted == "increasing" else "increasing"
         claim.matched_evidence = [e for c in series for e in c.evidence_ids]
+        if claim.period_start_year is not None and claim.period_year is not None:
+            by_year = {c.period_year: c for c in series}
+            start, end = claim.period_start_year, claim.period_year
+            if start not in by_year or end not in by_year:
+                claim.status = "UNSUPPORTED"
+                claim.reason = f"Need {get_metric(claim.metric).label} for FY{start} and FY{end} to check the stated range."
+                claim.missing_evidence = f"{get_metric(claim.metric).label} FY{start} and FY{end}"
+                return claim
+            _, overall = classify_steps([by_year[start].value, by_year[end].value], is_ratio)
+            claim.expected_display = f"{overall} FY{start}-FY{end}"
+            claim.status = "VERIFIED" if overall == wanted else ("CONTRADICTED" if overall == opposite else "PARTIALLY_VERIFIED")
+            claim.reason = f"FY{start} to FY{end}: {overall}."
+            return claim
         if claim.period_year is not None:
             by_year = {c.period_year: c for c in series}
             if claim.period_year not in by_year or (claim.period_year - 1) not in by_year:
