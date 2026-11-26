@@ -23,6 +23,9 @@ class AppSettings(BaseSettings):
     # LLM provider: "nvidia" (NVIDIA NIM, requires NVIDIA_API_KEY) or "offline" (deterministic
     # template narrator; no network, no key).
     llm_provider: Literal["nvidia", "offline"] = "nvidia"
+    # Model for the blind LLM rubric judge in evaluations; use a different model from the generator
+    # so the system is not grading its own output. Defaults to NVIDIA_MODEL when unset.
+    judge_model: str | None = None
 
     # Research agent bounds
     research_max_iterations: int = Field(default=3, ge=1, le=10)

@@ -179,7 +179,7 @@ def run_suite(
     if judge_mode == "nvidia":
         if not settings.nvidia_api_key:
             raise RuntimeError("NVIDIA_API_KEY is required for --judge nvidia")
-        judges.append(LLMRubricJudge(NvidiaLLM(api_key=settings.nvidia_api_key, model=settings.nvidia_model)))
+        judges.append(LLMRubricJudge(NvidiaLLM(api_key=settings.nvidia_api_key, model=settings.judge_model or settings.nvidia_model)))
     started = datetime.now(timezone.utc)
     results: List[Dict[str, Any]] = []
     for index, case in enumerate(suite.cases, start=1):
