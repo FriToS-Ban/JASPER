@@ -8,3 +8,6 @@ credentials.json
 .venv
 data
 .pytest_artifacts
+# Benchmark outputs and local tooling
+eval_results/
+.claude/launch.json
