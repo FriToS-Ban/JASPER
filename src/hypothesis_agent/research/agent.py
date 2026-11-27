@@ -277,7 +277,8 @@ class ResearchAgent:
             "allowed_metrics": sorted(METRICS),
         }
         llm_payload = self._llm_call(state, "critique_analysis", self.llm.critique_analysis, request, briefing)
-        llm_notes = merge_llm_critique(llm_payload if isinstance(llm_payload, dict) else None, issues, actions, plan, iteration)
+        llm_notes = merge_llm_critique(llm_payload if isinstance(llm_payload, dict) else None, issues, actions, plan,
+                                       iteration, assessments=assessments)
 
         new_evidence = len(registry.records) - int(state.get("evidence_at_iteration_start", 0))
         decision, rationale, to_execute = decide(

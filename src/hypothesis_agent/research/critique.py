@@ -278,14 +278,41 @@ _LLMIssue = LLMCritiqueIssue
 _LLMCritique = LLMCritique
 
 
+def escalation_metrics(assessments: Sequence[ExpectationAssessment], issues: Sequence[CritiqueIssue]) -> set[str]:
+    """Metrics on which an LLM critic may escalate to human review.
+
+    These are the metrics a SUPPORTS assessment rests on (the assessed metric and its raw inputs)
+    that no deterministic issue already names. Everything else the critic can raise is already in
+    the record: contradicted, reversed or insufficient expectations lower the verdict and carry
+    caveats, missing data is recorded as missing, and deterministic issues are reported as such.
+    Repeating those is not a reason to stop for a reviewer.
+    """
+
+    relied: set[str] = set()
+    for assessment in assessments:
+        if assessment.metric and assessment.status == "SUPPORTS":
+            relied.add(assessment.metric)
+            relied.update(raw_dependencies(assessment.metric))
+    flagged = {m for issue in issues if issue.source == "deterministic" for m in issue.metrics}
+    return relied - flagged
+
+
 def merge_llm_critique(
     payload: Optional[Dict[str, Any]],
     issues: List[CritiqueIssue],
     actions: List[RequiredAction],
     plan: ResearchPlan,
     iteration: int,
+    *,
+    assessments: Optional[Sequence[ExpectationAssessment]] = None,
 ) -> Optional[str]:
-    """Validate and merge LLM critic output. Returns notes (including rejections) for the record."""
+    """Validate and merge LLM critic output. Returns notes (including rejections) for the record.
+
+    When ``assessments`` are given, a high-severity LLM issue keeps its severity (and so its power
+    to trigger HUMAN_REVIEW) only if it challenges evidence behind a supporting assessment that
+    deterministic checks have not already flagged; otherwise it is recorded at medium severity and
+    the change is noted.
+    """
 
     if not payload:
         return None
@@ -294,11 +321,20 @@ def merge_llm_critique(
     except ValidationError as exc:
         return f"LLM critique rejected (schema): {exc.errors(include_url=False)[0]['msg']}"
     notes = [critique.notes] if critique.notes else []
+    escalable = escalation_metrics(assessments, issues) if assessments is not None else None
+    lowered: List[str] = []
     for item in critique.issues[:5]:
         known = [m for m in item.metrics if is_known_metric(m)]
         severity = item.severity if known else "low"  # cannot escalate without naming real metrics
-        issues.append(CritiqueIssue(issue_id=f"I{iteration}.{len(issues) + 1}", type="LLM_CRITIC", severity=severity,
+        issue_id = f"I{iteration}.{len(issues) + 1}"
+        if severity == "high" and escalable is not None and not set(known) & escalable:
+            severity = "medium"
+            lowered.append(issue_id)
+        issues.append(CritiqueIssue(issue_id=issue_id, type="LLM_CRITIC", severity=severity,
                                     description=item.description[:500], metrics=known, source="llm"))
+    if lowered:
+        notes.append(f"LLM issue(s) {', '.join(lowered)} lowered from high to medium severity: they do not challenge "
+                     "evidence behind a supporting assessment that deterministic checks had not already flagged.")
     accepted = [m for m in critique.additional_metrics if is_known_metric(m) and not plan.has_metric(m)]
     rejected = [m for m in critique.additional_metrics if not is_known_metric(m)]
     relevant = [m for m in accepted if metric_category(m) in set(plan.categories()) | {"cash_flow", "profitability", "growth", "leverage"}]
