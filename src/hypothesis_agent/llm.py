@@ -20,6 +20,7 @@ from uuid import UUID
 
 import openai
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import LLMResult
@@ -683,11 +684,14 @@ class NvidiaLLM(BaseLLM):
                     lambda chat, m=attempt: chat.with_structured_output(schema, method=m, include_raw=True),
                     messages, operation=operation,
                 )
-            except openai.BadRequestError as exc:  # e.g. this method is not supported for the model
+            # 400/422: e.g. this response_format is not supported for the model; try the next method.
+            except (openai.BadRequestError, openai.UnprocessableEntityError) as exc:
                 failures.append(f"{attempt}: {_describe(exc)}")
             except openai.APIError as exc:
                 raise LLMError(f"LLM request failed ({self.model}): {type(exc).__name__}: {exc}") from exc
-            except Exception as exc:  # reply could not be parsed (e.g. SDK-side schema validation)
+            # The reply could not be parsed (parser or SDK-side checks such as a truncated reply).
+            # Other exceptions are bugs and propagate.
+            except (OutputParserException, ValidationError, ValueError, openai.OpenAIError) as exc:
                 failures.append(f"{attempt}: {_describe(exc)}")
             else:
                 parsed = out.get("parsed") if isinstance(out, dict) else None

@@ -156,6 +156,21 @@ def test_structured_output_falls_back_when_method_is_rejected_by_the_endpoint() 
     assert llm.chat_model.methods == ["json_schema", "json_mode"]
 
 
+def test_structured_output_falls_back_when_the_endpoint_answers_422() -> None:
+    response = httpx.Response(422, request=httpx.Request("POST", f"{NIM_BASE_URL}/chat/completions"))
+    rejected = openai.UnprocessableEntityError("response_format not supported", response=response, body=None)
+    llm = make_llm(rejected, tool_reply("ReportPayload", REPORT))
+    assert llm.generate_report(REQUEST, {}, "Narrative.", []) == REPORT
+    assert llm.chat_model.methods == ["json_schema", "json_mode"]
+
+
+def test_programming_errors_are_not_mistaken_for_unparseable_replies() -> None:
+    llm = make_llm(TypeError("bug in schema handling"), tool_reply("ReportPayload", REPORT))
+    with pytest.raises(TypeError, match="bug in schema handling"):
+        llm.generate_report(REQUEST, {}, "Narrative.", [])
+    assert len(llm.chat_model.calls) == 1
+
+
 def test_structured_output_raises_llm_error_when_every_attempt_fails() -> None:
     llm = make_llm(AIMessage(content="nope"), tool_reply("ResearchNarrative", {**NARRATIVE, "narrative": "  "}))
     with pytest.raises(LLMError, match="ResearchNarrative"):
@@ -391,3 +406,31 @@ def test_chat_openai_against_mock_nim_endpoint() -> None:
     assert action["rationale"] == "Model reasoning: Net margin is missing. Compute it."
     assert requests[-1]["tool_choice"] == "required" and requests[-1]["parallel_tool_calls"] is False
     assert len(requests) == 3
+
+
+def test_tool_loop_supports_adapters_without_native_tool_calling(tmp_path: Path) -> None:
+    from hypothesis_agent.config import AppSettings
+    from hypothesis_agent.orchestration.langgraph_pipeline import LangGraphValidationOrchestrator
+    from tests.research_helpers import ScriptedLLM, company_payloads
+
+    class LegacyAdapter:
+        """Duck-typed adapter (no BaseLLM base class, no choose_next_tool_call)."""
+
+        def __init__(self) -> None:
+            self._inner = ScriptedLLM(tool_actions=[
+                {"tool": "compute_metric", "arguments": {"metric": "net_margin", "ticker": "TEST"}, "rationale": "legacy"},
+                {"tool": "finish"},
+            ])
+
+        def __getattr__(self, name: str):
+            if name == "choose_next_tool_call":
+                raise AttributeError(name)
+            return getattr(self._inner, name)
+
+    settings = AppSettings(artifact_store_path=str(tmp_path / "artifacts"), llm_provider="offline")
+    orchestrator = LangGraphValidationOrchestrator(settings=settings, llm=LegacyAdapter(),
+                                                   artifact_store=ArtifactStore.from_path(settings.artifact_store_path),
+                                                   toolset=SyntheticToolSet(company_payloads(healthy_cash=True)))
+    context = orchestrator.run_research(REQUEST, {"metadata": {"workflow_id": "wf-legacy"}})
+    llm_calls = [c for c in context["research"]["tool_calls"] if c["origin"] == "llm"]
+    assert llm_calls and llm_calls[0]["rationale"] == "legacy"

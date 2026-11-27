@@ -246,7 +246,11 @@ class ResearchAgent:
                 "recent_tool_calls": summarise_tool_log(state["tool_calls"]),
                 "remaining_calls": self.limits.max_tool_calls - toolbox.calls_made,
             }
-            action = self._llm_call(state, "choose_next_analysis_action", self.llm.choose_next_tool_call, request, briefing, tools)
+            choose = getattr(self.llm, "choose_next_tool_call", None)
+            if choose is None:  # adapter predating native tool calling
+                action = self._llm_call(state, "choose_next_analysis_action", self.llm.choose_next_analysis_action, request, briefing)
+            else:
+                action = self._llm_call(state, "choose_next_analysis_action", choose, request, briefing, tools)
             if not isinstance(action, dict) or action.get("tool") in {None, "finish", "stop"}:
                 break
             toolbox.invoke(str(action.get("tool")), action.get("arguments") or {}, origin="llm",
