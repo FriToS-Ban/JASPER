@@ -173,7 +173,15 @@ class HypothesisWorkflowClient:
         # A fresh orchestrator continues the paused thread from the shared checkpointer: the
         # human_review node receives the decision, then delivery runs on the checkpointed context.
         orchestrator = LangGraphValidationOrchestrator()
-        await self._advance(key, orchestrator, Command(resume=decision))
+        # Tracked like a submitted run, so cancel() can stop review and delivery while they run.
+        task = asyncio.create_task(self._advance(key, orchestrator, Command(resume=decision)))
+        self._tasks[key] = task
+        await asyncio.wait({task})
+        if task.cancelled():
+            # cancel() stopped the run; it records the cancelled summary right after the task ends.
+            await asyncio.sleep(0)
+            return self._local_runs[key].summary
+        task.result()  # re-raise a stage failure (already recorded as a BLOCKED milestone)
         return self._local_runs[key].summary
 
     async def fetch_summary(self, workflow_id: str, workflow_run_id: str) -> ValidationSummary:

@@ -265,3 +265,37 @@ async def test_review_pauses_on_interrupt_and_resumes_from_the_checkpoint(monkey
     assert (await client.describe(*key)).status == "COMPLETED"
     assert client._checkpointer.get_tuple(config) is None  # finished runs drop their checkpoints
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_resume_stays_cancelled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import time
+    import hypothesis_agent.workflows.hypothesis_workflow as wf_module
+
+    def factory() -> LangGraphValidationOrchestrator:
+        orchestrator = _orchestrator(tmp_path)
+        original = orchestrator.run_stage
+
+        def slow_delivery(stage, request, context):
+            if stage == "delivery":
+                time.sleep(0.3)
+            return original(stage, request, context)
+
+        orchestrator.run_stage = slow_delivery  # type: ignore[assignment]
+        return orchestrator
+
+    monkeypatch.setattr(wf_module, "LangGraphValidationOrchestrator", factory)
+    client = HypothesisWorkflowClient(namespace="t", task_queue="q", workflow="w", address="a")
+    request = make_request("TEST's operating margins are improving.").model_copy(update={"requires_human_review": True})
+    submission = await client.submit(uuid4(), request)
+    for _ in range(200):
+        if (await client.describe(submission.workflow_id, submission.workflow_run_id)).status == "AWAITING_REVIEW":
+            break
+        await asyncio.sleep(0.05)
+    resume = asyncio.create_task(client.resume(submission.workflow_id, submission.workflow_run_id, "approved"))
+    await asyncio.sleep(0.1)
+    await client.cancel(submission.workflow_id, submission.workflow_run_id)
+    summary = await resume
+    assert summary.current_stage == "cancelled"
+    assert (await client.describe(submission.workflow_id, submission.workflow_run_id)).status == "CANCELLED"
+    await client.close()
