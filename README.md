@@ -30,9 +30,12 @@ reached its verdict.
 ```
             Web UI / REST API / jasper CLI / benchmark runner
                                   |
-                 HypothesisWorkflowClient  (follows the router; human-review gate)
+     HypothesisWorkflowClient (graph.astream + InMemorySaver checkpoints;
+                               human review = interrupt(), resumed with Command)
                                   |
-               LangGraphValidationOrchestrator.run_stage / next_stage
+     LangGraphValidationOrchestrator.build_graph -> LangGraph StateGraph
+       (one node per stage, conditional edges from research/agent.py:ROUTES,
+        recursion_limit 40)
                                   |
    +-------------------------- ResearchAgent ----------------------------+
    |                                                                     |
@@ -71,7 +74,9 @@ Key modules (all under `src/hypothesis_agent/`):
 | `research/critique.py` | Structured critique issues, required actions and the branching decision |
 | `research/claims.py` | Claim extraction and deterministic verification |
 | `research/uncertainty.py` | Structured uncertainty assessment |
-| `research/agent.py` | Nodes and router |
+| `research/agent.py` | Research nodes and the routing table (`ROUTES`) the graph is compiled from |
+| `orchestration/langgraph_pipeline.py` | `LangGraphValidationOrchestrator`: stage execution, the compiled LangGraph `StateGraph`, batch `run_research` |
+| `workflows/hypothesis_workflow.py` | Async workflow client: streams the graph, records milestones, pauses and resumes human review through LangGraph checkpoints |
 | `research/reproduce.py` | Re-verifies a run directory from disk |
 | `reporting/pdf_report.py` | The evidence-backed PDF |
 | `evaluation/` | Benchmark loading, runner, scoring, judges, human review, comparison |
@@ -99,6 +104,16 @@ Key modules (all under `src/hypothesis_agent/`):
    regenerated once with the failures as corrections. Remaining failures are reported, not hidden.
 6. **Report.** The PDF is rendered from recorded state; the human-review gate is applied when the
    request asks for it or the agent escalated.
+
+The loop runs as a LangGraph `StateGraph`: each stage is a node, the critique decision, the
+claim-verification retry and the review/delivery split are conditional edges, and every
+invocation has a `recursion_limit` of 40 node executions on top of the research limits. The graph
+state is plain JSON (request, stage context, last stage outcome). In the web app the workflow
+client runs the graph with an in-memory checkpointer; `human_review` pauses with `interrupt()` and
+`POST /v1/hypotheses/{id}/resume` continues the checkpointed thread with `Command(resume=decision)`.
+Checkpoints live in process memory, so a paused run does not survive a server restart. The CLI and
+benchmark run the same graph synchronously and stop after the report. If LangSmith tracing is
+enabled through its environment variables, LangGraph traces runs including the full stage context.
 
 ### Evidence verification
 
