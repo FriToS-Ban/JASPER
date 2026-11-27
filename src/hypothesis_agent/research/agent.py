@@ -1,6 +1,7 @@
 """The research agent: stateful nodes plus a router with bounded, conditional loops.
 
-Graph (each arrow is chosen at run time by :func:`next_stage` from recorded state)::
+Graph (the edges are declared once in :data:`ROUTES`; conditional arrows are chosen at run time
+by the routers from recorded state)::
 
     plan_generation -> data_collection -> hybrid_analysis -> critique
     critique --CONTINUE / INSUFFICIENT_EVIDENCE / HUMAN_REVIEW--> detailed_analysis
@@ -8,7 +9,15 @@ Graph (each arrow is chosen at run time by :func:`next_stage` from recorded stat
     critique --REANALYZE--> hybrid_analysis                         (inconsistent values discarded)
     detailed_analysis -> claim_verification
     claim_verification --failed claims, attempts left--> detailed_analysis (with corrections)
-    claim_verification -> report_generation -> [human_review] -> delivery
+    claim_verification -> report_generation
+    report_generation --review required or agent escalated--> human_review -> delivery
+    report_generation --otherwise--> delivery
+
+The orchestrator compiles :data:`ROUTES` into a LangGraph ``StateGraph`` whose conditional edges
+call :func:`route_after_critique`, :func:`route_after_claim_verification` and
+:func:`route_after_report_generation`; :func:`next_stage` resolves a single step from the same
+table, so there is one source of routing truth. The loops are bounded by :class:`ResearchLimits`
+and, as defence in depth, by the graph's recursion limit.
 
 All state lives in ``context["research"]`` as JSON so stages can run in separate workers and
 every decision, revision and tool call is preserved for the report.
@@ -17,7 +26,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from hypothesis_agent.llm import BaseLLM, LLMError
 from hypothesis_agent.models.hypothesis import HypothesisRequest
@@ -480,30 +490,85 @@ def reproducibility_manifest(state: Dict[str, Any], registry: EvidenceRegistry) 
     }
 
 
-def next_stage(stage: str, context: Dict[str, Any], *, human_review_required: bool = False) -> Optional[str]:
-    """Router: decide the next stage from recorded research state."""
+# ----------------------------------------------------------------------
+# Router
+# ----------------------------------------------------------------------
+STAGES: Tuple[str, ...] = (
+    "plan_generation",
+    "data_collection",
+    "hybrid_analysis",
+    "critique",
+    "detailed_analysis",
+    "claim_verification",
+    "report_generation",
+    "human_review",
+    "delivery",
+)
 
-    state = context.get("research") or {}
-    if stage == "plan_generation":
+# Every router takes the stage context and whether the request itself demands human review, so the
+# compiled graph and :func:`next_stage` call them the same way.
+Router = Callable[[Dict[str, Any], bool], str]
+
+
+def route_after_critique(context: Dict[str, Any], human_review_required: bool = False) -> str:
+    """Follow the critique decision: fetch more data, re-run analysis, or write the narrative."""
+
+    decision = (((context.get("research") or {}).get("decision")) or {}).get("status", "CONTINUE")
+    if decision in {"COLLECT_MORE_DATA", "REVISE_PLAN"}:
         return "data_collection"
-    if stage == "data_collection":
+    if decision == "REANALYZE":
         return "hybrid_analysis"
-    if stage == "hybrid_analysis":
-        return "critique"
-    if stage == "critique":
-        decision = (state.get("decision") or {}).get("status", "CONTINUE")
-        if decision in {"COLLECT_MORE_DATA", "REVISE_PLAN"}:
-            return "data_collection"
-        if decision == "REANALYZE":
-            return "hybrid_analysis"
-        return "detailed_analysis"
-    if stage == "detailed_analysis":
-        return "claim_verification"
-    if stage == "claim_verification":
-        return "detailed_analysis" if state.get("narrative_retry") else "report_generation"
-    if stage == "report_generation":
-        requested = bool((state.get("human_review") or {}).get("requested"))
-        return "human_review" if (human_review_required or requested) else "delivery"
-    if stage == "human_review":
-        return "delivery"
-    return None
+    return "detailed_analysis"
+
+
+def route_after_claim_verification(context: Dict[str, Any], human_review_required: bool = False) -> str:
+    """Send a narrative with failed claims back for correction while attempts remain."""
+
+    return "detailed_analysis" if (context.get("research") or {}).get("narrative_retry") else "report_generation"
+
+
+def route_after_report_generation(context: Dict[str, Any], human_review_required: bool = False) -> str:
+    """Pause for a reviewer when the request requires it or the agent escalated; otherwise deliver."""
+
+    requested = bool(((context.get("research") or {}).get("human_review") or {}).get("requested"))
+    return "human_review" if (human_review_required or requested) else "delivery"
+
+
+@dataclass(frozen=True)
+class StageEdge:
+    """Outgoing edge of one stage: a fixed successor, or a router choosing among ``targets``."""
+
+    targets: Tuple[str, ...]
+    router: Optional[Router] = None
+
+    def resolve(self, context: Dict[str, Any], human_review_required: bool = False) -> str:
+        if self.router is None:
+            return self.targets[0]
+        target = self.router(context, human_review_required)
+        if target not in self.targets:
+            raise ValueError(f"Router {self.router.__name__} returned undeclared stage '{target}'")
+        return target
+
+
+# The single source of routing truth: the orchestrator compiles this table into a LangGraph
+# StateGraph (fixed edges plus conditional edges calling the routers above), and next_stage
+# resolves one step from it. ``delivery`` has no entry: it ends the run.
+ROUTES: Dict[str, StageEdge] = {
+    "plan_generation": StageEdge(("data_collection",)),
+    "data_collection": StageEdge(("hybrid_analysis",)),
+    "hybrid_analysis": StageEdge(("critique",)),
+    "critique": StageEdge(("data_collection", "hybrid_analysis", "detailed_analysis"), route_after_critique),
+    "detailed_analysis": StageEdge(("claim_verification",)),
+    "claim_verification": StageEdge(("detailed_analysis", "report_generation"), route_after_claim_verification),
+    "report_generation": StageEdge(("human_review", "delivery"), route_after_report_generation),
+    "human_review": StageEdge(("delivery",)),
+}
+
+
+def next_stage(stage: str, context: Dict[str, Any], *, human_review_required: bool = False) -> Optional[str]:
+    """Router: decide the next stage from recorded research state (None when the run is finished)."""
+
+    edge = ROUTES.get(stage)
+    if edge is None:
+        return None
+    return edge.resolve(context, human_review_required)

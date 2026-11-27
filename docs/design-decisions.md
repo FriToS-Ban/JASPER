@@ -51,28 +51,43 @@ as a conflict, which the critique can escalate.
 *Why:* identical inputs produce identical IDs across runs, so reports and benchmark results are
 diffable and claims can cite stable identifiers.
 
-## 5. A router over stages, not a new framework
+## 5. The stage router is compiled into a LangGraph StateGraph
 
-The existing orchestrator already had stage execution, milestones, artifact storage and a
-human-review gate. The agent loop is a small router (`research/agent.py:next_stage`) driven by
-recorded state, and both the async workflow client and the synchronous CLI/benchmark runner follow
-it. Stage names and the `run_stage` contract are unchanged; `critique` and `claim_verification`
-were added.
+The routing is declared once, as a table (`research/agent.py:ROUTES`): fixed successors for the
+linear steps and three routers that read recorded state (after critique, after claim
+verification, after the report). `LangGraphValidationOrchestrator.build_graph` compiles that table
+into a LangGraph `StateGraph` with one node per stage (each wrapping `run_stage`) and conditional
+edges calling the same routers; `next_stage` resolves single steps from the same table for tests
+and stage-by-stage callers. Stage names and the `run_stage` contract are unchanged.
 
-*Why:* the loop is explicit, bounded (iteration limit, reanalysis limit, narrative-attempt limit,
-tool-call budget, stage-execution cap) and testable stage by stage, and existing callers keep working.
+The graph state is plain JSON: the request, the stage context, and the last node's milestone,
+evidence and summary. That keeps checkpoints serialisable and the research state as auditable as
+before; LangGraph decides the order of execution, never the content.
 
-*Note:* despite its name, the original code did not use LangGraph's runtime. Adopting it now would
-have meant rewriting the milestone and review machinery for no gain in auditability.
+*Why:* the loop stays explicit and testable stage by stage, but the runtime is a standard one:
+conditional edges instead of a hand-written `while` loop, a `recursion_limit` (40 node executions
+per invocation) as defence in depth on top of the iteration, reanalysis, narrative-attempt and
+tool-call limits, streaming of node start and finish events for the milestone timeline, and
+checkpointing for human review (section 6). The port was checked for parity: the offline core,
+held-out and paraphrase runs give identical verdicts, scores, claim counts and routes before and
+after.
+
+*Note:* the original code carried the LangGraph name and dependency without using its runtime.
 
 ## 6. Critique-triggered human review reuses the existing gate
 
 When the critique decides `HUMAN_REVIEW` (high-severity source conflict, LLM-flagged high-impact
 ambiguity that names real metrics, or calculations that stay inconsistent after reanalysis), the
-agent still finishes the report, then pauses before delivery with the reason attached.
+agent still finishes the report, then pauses before delivery with the reason attached. The pause
+is LangGraph's `interrupt()` inside the `human_review` node; the workflow client owns an
+`InMemorySaver` checkpointer (thread id = workflow id + run id), and the resume endpoint continues
+the checkpointed thread with `Command(resume=decision)`, which records the decision and runs
+delivery. Finished, failed and cancelled threads are deleted.
 
-*Why:* reviewers get a complete report to judge rather than a half-finished state, and the
-existing resume API works unchanged.
+*Why:* reviewers get a complete report to judge rather than a half-finished state, the existing
+resume API works unchanged, and the paused run is a real checkpoint rather than hand-kept copies
+of the summary. Checkpoints are in memory, like the workflow client's run table, so a server
+restart loses paused runs; a persistent checkpointer (e.g. SQLite) is the upgrade path.
 
 ## 7. Frozen fixtures for evaluation
 

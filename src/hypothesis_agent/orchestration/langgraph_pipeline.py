@@ -1,10 +1,19 @@
-"""Orchestration for the JASPER research pipeline.
+"""Orchestration for the JASPER research pipeline as a LangGraph ``StateGraph``.
 
-Each stage is a node executed by :meth:`LangGraphValidationOrchestrator.run_stage`; the next node
-is chosen by :meth:`next_stage` from the research state, which lets the critique branch back to
-data collection, re-analysis, or forward to narrative, and lets claim verification send a failed
-narrative back for correction. Stage names are unchanged from the original linear pipeline so
-existing callers keep working; ``critique`` and ``claim_verification`` are new.
+:meth:`LangGraphValidationOrchestrator.build_graph` compiles the routing table
+(:data:`hypothesis_agent.research.agent.ROUTES`) into a graph with one node per stage. Each node
+wraps :meth:`LangGraphValidationOrchestrator.run_stage`; fixed edges link the linear steps and
+conditional edges call the research routers, which lets the critique branch back to data
+collection, re-analysis, or forward to narrative, lets claim verification send a failed
+narrative back for correction, and sends the report to human review when it is required.
+
+The graph state (:class:`ResearchGraphState`) is plain JSON: the request as
+``model_dump(mode="json")``, the stage context, and the last stage's milestone/evidence/summary.
+``human_review`` pauses with LangGraph's ``interrupt()``; with a checkpointer the run resumes
+from the checkpoint via ``Command(resume=decision)``. Every graph invocation is bounded by a
+``recursion_limit`` of :data:`MAX_STAGE_EXECUTIONS` node executions on top of the research
+iteration limits. Stage names are unchanged from the original linear pipeline so existing
+callers keep working.
 """
 from __future__ import annotations
 
@@ -15,9 +24,13 @@ import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, TypedDict, cast
 
 import matplotlib
+from langgraph.errors import GraphRecursionError
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Checkpointer, interrupt
 
 # Use a headless backend for deterministic chart generation in tests and workers.
 matplotlib.use("Agg", force=True)
@@ -37,8 +50,11 @@ from hypothesis_agent.orchestration.tool_catalog import ToolDefinition, load_too
 from hypothesis_agent.orchestration.yfinance_tools import ToolSet, YFinanceToolSet  # noqa: E402
 from hypothesis_agent.reporting.pdf_report import render_research_report  # noqa: E402
 from hypothesis_agent.research.agent import (  # noqa: E402
+    ROUTES,
+    STAGES,
     ResearchAgent,
     ResearchLimits,
+    StageEdge,
     next_stage as route_next_stage,
     research_state,
 )
@@ -51,7 +67,11 @@ StageContext = Dict[str, Any]
 RESULT_PREFIX = "RESULT::"
 MAX_REPL_ATTEMPTS = 5
 STDOUT_CHARACTER_LIMIT = 1600
+# Defence in depth on top of the research iteration limits: one graph invocation may execute at
+# most this many stage nodes. Each stage is one LangGraph superstep, so this is the graph's
+# recursion_limit (a limit of N allows exactly N node executions).
 MAX_STAGE_EXECUTIONS = 40
+BATCH_REVIEW_DECISION = "pending (not executed in batch mode)"
 VERDICT_TEXT = {
     "SUPPORTED": "Supported",
     "PARTIALLY_SUPPORTED": "Partially supported",
@@ -135,9 +155,42 @@ class StageExecutionResult:
     evidence: List[EvidenceReference] = field(default_factory=list)
     summary: Optional[ValidationSummary] = None
 
+    def outcome(self) -> Dict[str, Any]:
+        """JSON form of everything except the context, as carried in the graph state."""
+
+        return {
+            "milestone": self.milestone.model_dump(mode="json"),
+            "evidence": [reference.model_dump(mode="json") for reference in self.evidence],
+            "summary": self.summary.model_dump(mode="json") if self.summary else None,
+        }
+
+    @classmethod
+    def from_graph_update(cls, update: Dict[str, Any]) -> "StageExecutionResult":
+        """Rebuild a stage result from the ``context`` and ``outcome`` a graph node wrote."""
+
+        outcome = update["outcome"]
+        summary = outcome.get("summary")
+        return cls(
+            context=update["context"],
+            milestone=WorkflowMilestone.model_validate(outcome["milestone"]),
+            evidence=[EvidenceReference.model_validate(reference) for reference in outcome.get("evidence", [])],
+            summary=ValidationSummary.model_validate(summary) if summary else None,
+        )
+
+
+class ResearchGraphState(TypedDict, total=False):
+    """State of the research graph. Every value is plain JSON so checkpoints can be serialised."""
+
+    request: Dict[str, Any]
+    """The ``HypothesisRequest`` as ``model_dump(mode="json")``."""
+    context: StageContext
+    """The stage context each node reads and replaces (research state, evidence, report, ...)."""
+    outcome: Dict[str, Any]
+    """Milestone, evidence and summary of the node that ran last (see ``StageExecutionResult``)."""
+
 
 class LangGraphValidationOrchestrator:
-    """Run the evidence-grounded research pipeline stage by stage."""
+    """Run the evidence-grounded research pipeline: single stages, or the compiled research graph."""
 
     def __init__(
         self,
@@ -213,6 +266,96 @@ class LangGraphValidationOrchestrator:
     def human_review_requested(context: StageContext) -> bool:
         return bool(((context.get("research") or {}).get("human_review") or {}).get("requested"))
 
+    # ------------------------------------------------------------------
+    # LangGraph
+    # ------------------------------------------------------------------
+    def build_graph(
+        self,
+        *,
+        checkpointer: Checkpointer = None,
+        stop_after: Optional[str] = None,
+        record_stage_status: bool = False,
+    ) -> CompiledStateGraph:
+        """Compile the research pipeline into a LangGraph ``StateGraph``.
+
+        One node per stage in :data:`STAGES`; edges come from :data:`ROUTES` (fixed edges for the
+        linear steps, conditional edges for the critique decision, the claim-verification retry and
+        the review/delivery split). ``stop_after`` ends the graph after that stage instead of
+        following its route. ``record_stage_status`` also records each stage's milestone status in
+        ``context["metadata"]["stages"]`` (the workflow client's progress record). The
+        ``human_review`` node pauses with ``interrupt()`` and needs a ``checkpointer`` to resume.
+        """
+
+        builder = StateGraph(ResearchGraphState)
+        for stage in STAGES:
+            if stage == "human_review":
+                builder.add_node(stage, self._human_review_node)
+            else:
+                builder.add_node(stage, self._stage_node(stage, record_stage_status=record_stage_status))
+        builder.add_edge(START, STAGES[0])
+        for stage in STAGES:
+            edge = ROUTES.get(stage)
+            if stage == stop_after or edge is None:
+                builder.add_edge(stage, END)
+            elif edge.router is None:
+                builder.add_edge(stage, edge.targets[0])
+            else:
+                builder.add_conditional_edges(stage, self._edge_router(edge), list(edge.targets))
+        return builder.compile(checkpointer=checkpointer, name="jasper_research")
+
+    @staticmethod
+    def graph_input(request: HypothesisRequest, context: StageContext) -> ResearchGraphState:
+        """Initial graph state for a run."""
+
+        return {"request": request.model_dump(mode="json"), "context": context}
+
+    @staticmethod
+    def graph_config(thread_id: Optional[str] = None) -> Dict[str, Any]:
+        """Run config: the stage budget as recursion limit, plus the checkpoint thread if any."""
+
+        config: Dict[str, Any] = {"recursion_limit": MAX_STAGE_EXECUTIONS}
+        if thread_id is not None:
+            config["configurable"] = {"thread_id": thread_id}
+        return config
+
+    def _stage_node(self, stage: str, *, record_stage_status: bool) -> Callable[[ResearchGraphState], Dict[str, Any]]:
+        def node(state: ResearchGraphState) -> Dict[str, Any]:
+            request = HypothesisRequest.model_validate(state["request"])
+            # Look run_stage up at call time so a replaced run_stage on the instance is honoured.
+            result = self.run_stage(stage, request, state["context"])
+            if record_stage_status:
+                stages = result.context.setdefault("metadata", {}).setdefault("stages", {})
+                stages[result.milestone.name] = {"status": result.milestone.status.value, "detail": result.milestone.detail}
+            return {"context": result.context, "outcome": result.outcome()}
+
+        node.__name__ = stage
+        return node
+
+    def _human_review_node(self, state: ResearchGraphState) -> Dict[str, Any]:
+        """Pause for a reviewer; on resume record the decision and continue to delivery."""
+
+        context = state["context"]
+        reason = ((context.get("research") or {}).get("human_review") or {}).get("reason")
+        decision = interrupt({
+            "stage": "human_review",
+            "reason": reason,
+            "required_by_request": bool(state["request"].get("requires_human_review")),
+        })
+        context = self._clone_context(context)
+        context.setdefault("metadata", {})["human_review"] = {"required": True, "decision": decision}
+        milestone = WorkflowMilestone(name="human_review", status=MilestoneStatus.COMPLETED, detail=f"Human decision: {decision}.")
+        return {"context": context, "outcome": StageExecutionResult(context=context, milestone=milestone).outcome()}
+
+    @staticmethod
+    def _edge_router(edge: StageEdge) -> Callable[[ResearchGraphState], str]:
+        """Conditional-edge path function: the same resolution next_stage uses, read from graph state."""
+
+        def route(state: ResearchGraphState) -> str:
+            return edge.resolve(state["context"], bool(state["request"].get("requires_human_review")))
+
+        route.__name__ = edge.router.__name__ if edge.router else "route"  # names the branch in the graph
+        return route
+
     def run_research(
         self,
         request: HypothesisRequest,
@@ -220,23 +363,21 @@ class LangGraphValidationOrchestrator:
         *,
         stop_after: str = "report_generation",
     ) -> StageContext:
-        """Execute the routed pipeline synchronously (CLI and benchmark entry point)."""
+        """Run the research graph synchronously (CLI and benchmark entry point).
+
+        Stops after ``stop_after``. Batch runs have no reviewer: when the route reaches
+        ``human_review`` the graph's interrupt ends the run and the review is recorded as pending.
+        """
 
         context = context or {"metadata": {"workflow_id": f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')}"}}
-        stage: Optional[str] = "plan_generation"
-        executed = 0
-        while stage is not None:
-            executed += 1
-            if executed > MAX_STAGE_EXECUTIONS:
-                raise RuntimeError(f"Pipeline exceeded {MAX_STAGE_EXECUTIONS} stage executions; aborting to prevent a loop.")
-            if stage == "human_review":
-                context.setdefault("metadata", {})["human_review"] = {"required": True, "decision": "pending (not executed in batch mode)"}
-                break
-            result = self.run_stage(stage, request, context)
-            context = result.context
-            if stage == stop_after:
-                break
-            stage = self.next_stage(stage, request, context)
+        graph = self.build_graph(stop_after=stop_after)
+        try:
+            final = graph.invoke(self.graph_input(request, context), self.graph_config())
+        except GraphRecursionError as exc:
+            raise RuntimeError(f"Pipeline exceeded {MAX_STAGE_EXECUTIONS} stage executions; aborting to prevent a loop.") from exc
+        context = final["context"]
+        if final.get("__interrupt__"):
+            context.setdefault("metadata", {})["human_review"] = {"required": True, "decision": BATCH_REVIEW_DECISION}
         return context
 
     # ------------------------------------------------------------------

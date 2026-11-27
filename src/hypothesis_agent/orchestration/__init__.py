@@ -1,1 +1,1 @@
-"""Hypothesis validation orchestration using LangGraph and YFinance."""
+"""Hypothesis validation orchestration: the research pipeline as a LangGraph StateGraph, plus its tools."""
