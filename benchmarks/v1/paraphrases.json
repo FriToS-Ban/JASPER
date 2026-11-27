@@ -1,0 +1,85 @@
+{
+  "suite": "jasper-benchmark-paraphrases",
+  "version": "1.0.0",
+  "description": "Robustness probe: reworded hypotheses over the same frozen data. These were written after the hypothesis parser was built and were NOT used to develop it, so they measure how much the rule-based parser depends on the core suite's phrasing. Run with --include-paraphrases; scored separately.",
+  "cases": [
+    {
+      "id": "NVDA-P1",
+      "category": "supported",
+      "ticker": "NVDA",
+      "hypothesis": "Nvidia's sales are rising quickly and its operating profitability has widened, while it generates more free cash flow.",
+      "research_objective": "Paraphrase of NVDA-01.",
+      "expected_evidence_categories": ["growth", "profitability", "cash_flow"],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": ["SUPPORTED", "PARTIALLY_SUPPORTED"],
+      "important_caveats": [{"description": "Operating margin slipped in FY2026.", "keywords": ["latest period", "reversed"]}],
+      "evaluation_criteria": [],
+      "notes": "Same data as NVDA-01."
+    },
+    {
+      "id": "TSLA-P1",
+      "category": "supported",
+      "ticker": "TSLA",
+      "hypothesis": "Tesla's operating margin has been compressing over the past few years.",
+      "research_objective": "Inverse framing of TSLA-01.",
+      "expected_evidence_categories": ["profitability"],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": ["SUPPORTED"],
+      "important_caveats": [],
+      "evaluation_criteria": [],
+      "notes": "Operating margin 17.0% -> 9.2% -> 7.9% -> 5.1%."
+    },
+    {
+      "id": "KO-P1",
+      "category": "conflicting_metrics",
+      "ticker": "KO",
+      "hypothesis": "Coca-Cola is turning less of its net income into operating cash, even as its operating margin climbs.",
+      "research_objective": "Paraphrase of KO-01.",
+      "expected_evidence_categories": ["profitability", "cash_flow"],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": ["SUPPORTED"],
+      "important_caveats": [],
+      "evaluation_criteria": [],
+      "notes": "Same data as KO-01."
+    },
+    {
+      "id": "GOOGL-P1",
+      "category": "supported",
+      "ticker": "GOOGL",
+      "hypothesis": "Alphabet's valuation looks cheap relative to how fast its earnings have grown.",
+      "research_objective": "Inverse framing of GOOGL-01.",
+      "expected_evidence_categories": ["valuation", "growth"],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": ["SUPPORTED", "PARTIALLY_SUPPORTED"],
+      "important_caveats": [],
+      "evaluation_criteria": [],
+      "notes": "Computed PEG ~0.4; Yahoo PEG 0.94."
+    },
+    {
+      "id": "INTC-P1",
+      "category": "supported",
+      "ticker": "INTC",
+      "hypothesis": "Intel's margins and net income deteriorated from 2022 to 2025.",
+      "research_objective": "Inverse framing of INTC-01.",
+      "expected_evidence_categories": ["profitability"],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": ["SUPPORTED"],
+      "important_caveats": [],
+      "evaluation_criteria": [],
+      "notes": "Same data as INTC-01."
+    },
+    {
+      "id": "AMZN-P1",
+      "category": "period_dependent",
+      "ticker": "AMZN",
+      "hypothesis": "Amazon's free cash flow generation is under pressure from heavy capital spending.",
+      "research_objective": "Reframing of AMZN-01 around capex.",
+      "expected_evidence_categories": ["cash_flow"],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": ["PARTIALLY_SUPPORTED", "SUPPORTED"],
+      "important_caveats": [],
+      "evaluation_criteria": [],
+      "notes": "FCF fell in FY2025 as capex reached 131.8B; up versus FY2022."
+    }
+  ]
+}

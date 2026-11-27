@@ -1,0 +1,592 @@
+{
+  "suite": "jasper-benchmark",
+  "version": "1.0.0",
+  "description": "Investment hypotheses with expected conclusions derived from frozen Yahoo Finance snapshots (fixtures/, captured 2026-11-26). Expected conclusions live only here and are never passed to the agent.",
+  "verdict_scale": [
+    "NOT_SUPPORTED",
+    "PARTIALLY_SUPPORTED",
+    "SUPPORTED"
+  ],
+  "cases": [
+    {
+      "id": "NVDA-01",
+      "category": "supported",
+      "ticker": "NVDA",
+      "hypothesis": "NVIDIA's revenue growth has been accompanied by expanding operating margins and strong free cash flow generation.",
+      "research_objective": "Test whether revenue growth, operating margin and free cash flow all improved together.",
+      "expected_evidence_categories": [
+        "growth",
+        "profitability",
+        "cash_flow"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Operating margin peaked in FY2025 (62.4%) and slipped to 60.4% in FY2026.",
+          "keywords": [
+            "latest period",
+            "most recent period",
+            "period chosen",
+            "reversed"
+          ]
+        },
+        {
+          "description": "Revenue growth decelerated from about 126% (FY2024) to 65% (FY2026), though it remains very high.",
+          "keywords": [
+            "decelerat",
+            "slowing",
+            "growth rate fell"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Revenue, operating margin and FCF trends reported with fiscal years",
+        "Margin dip in FY2026 acknowledged"
+      ],
+      "notes": "Revenue US$26.97B (FY2023) -> 60.92B -> 130.50B -> 215.94B (FY2026). Operating margin 20.7% -> 54.1% -> 62.4% -> 60.4%. FCF 3.81B -> 27.02B -> 60.85B -> 96.68B."
+    },
+    {
+      "id": "MSFT-01",
+      "category": "supported",
+      "ticker": "MSFT",
+      "hypothesis": "Microsoft is growing revenue at double-digit rates while expanding its operating margin.",
+      "research_objective": "Test the level of revenue growth and the direction of operating margin.",
+      "expected_evidence_categories": [
+        "growth",
+        "profitability"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Capex rose from US$28.1B (FY2023) to US$116.0B (FY2026), so free cash flow fell in FY2026 despite higher margins.",
+          "keywords": [
+            "capex",
+            "capital expenditure",
+            "cash generation diverge"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Latest YoY revenue growth above 10%",
+        "Operating margin trend reported"
+      ],
+      "notes": "Revenue growth FY2024 15.7%, FY2025 14.9%, FY2026 17.8%. Operating margin 41.8% -> 44.6% -> 45.6% -> 46.8%."
+    },
+    {
+      "id": "NFLX-01",
+      "category": "supported",
+      "ticker": "NFLX",
+      "hypothesis": "Netflix's operating margin expansion has been accompanied by stronger free cash flow.",
+      "research_objective": "Test whether operating margin and free cash flow both improved.",
+      "expected_evidence_categories": [
+        "profitability",
+        "cash_flow"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FY2022 free cash flow was unusually low (content-spend timing), flattering the multi-year improvement; FCF was flat FY2023-FY2024.",
+          "keywords": [
+            "content",
+            "flat",
+            "low base",
+            "depressed"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Operating margin and FCF trends with fiscal years"
+      ],
+      "notes": "Operating margin 17.8% (FY2022) -> 20.6% -> 26.7% -> 29.5%. FCF 1.62B -> 6.93B -> 6.92B -> 9.46B."
+    },
+    {
+      "id": "PFE-01",
+      "category": "supported",
+      "ticker": "PFE",
+      "hypothesis": "Pfizer's 2024 revenue growth is largely explained by a weak 2023 comparison base rather than a sustained recovery.",
+      "research_objective": "Determine whether FY2024 growth reflects a base effect after the FY2023 decline.",
+      "expected_evidence_categories": [
+        "growth"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Revenue fell again in FY2025 (-1.6%), so the FY2024 rebound did not continue.",
+          "keywords": [
+            "fy2025 revenue changed",
+            "did not continue",
+            "declin"
+          ]
+        },
+        {
+          "description": "The FY2023 collapse reflects COVID product normalisation, which consolidated data cannot isolate.",
+          "keywords": [
+            "covid",
+            "segment",
+            "product"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "FY2024 growth compared with the FY2023 decline",
+        "FY2024 revenue compared with the pre-decline peak"
+      ],
+      "notes": "Revenue US$101.17B (FY2022) -> 59.55B (FY2023, -41.1%) -> 63.63B (FY2024, +6.8%) -> 62.58B (FY2025). FY2024 remains 37% below FY2022."
+    },
+    {
+      "id": "WMT-01",
+      "category": "supported",
+      "ticker": "WMT",
+      "hypothesis": "Walmart appears overvalued relative to its historical earnings growth.",
+      "research_objective": "Compare valuation multiples with historical EPS growth.",
+      "expected_evidence_categories": [
+        "valuation",
+        "growth"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "The historical EPS CAGR depends on the window; FY2023 EPS was depressed, inflating it, and the computed PEG sits near the 2.0 threshold.",
+          "keywords": [
+            "threshold",
+            "window",
+            "depressed",
+            "sensitive"
+          ]
+        },
+        {
+          "description": "PEG thresholds are conventions, not facts.",
+          "keywords": [
+            "convention"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "P/E and EPS growth both reported",
+        "Threshold sensitivity acknowledged"
+      ],
+      "notes": "Trailing P/E 50.4; diluted EPS 1.42 (FY2023) -> 1.91 -> 2.41 -> 2.73 (FY2026), CAGR ~24%; latest YoY EPS growth 13%. Yahoo trailing PEG 4.35."
+    },
+    {
+      "id": "INTC-01",
+      "category": "contradicted",
+      "ticker": "INTC",
+      "hypothesis": "Intel's profitability improved between FY2022 and FY2025.",
+      "research_objective": "Test operating margin and net income over FY2022-FY2025.",
+      "expected_evidence_categories": [
+        "profitability"
+      ],
+      "expected_verdict": "NOT_SUPPORTED",
+      "acceptable_verdicts": [
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FY2025 improved versus the FY2024 trough, so a shorter window would look better.",
+          "keywords": [
+            "most recent period",
+            "latest period",
+            "against the window"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Endpoint comparison FY2022 vs FY2025",
+        "FY2024 trough acknowledged"
+      ],
+      "notes": "Operating margin 3.7% (FY2022) -> 0.1% -> -8.9% -> -0.0% (FY2025). Net income US$8.01B -> 1.69B -> -18.76B -> -0.27B."
+    },
+    {
+      "id": "TSLA-01",
+      "category": "contradicted",
+      "ticker": "TSLA",
+      "hypothesis": "Tesla's operating margins are expanding as revenue scales.",
+      "research_objective": "Test the direction of operating margin while revenue grows.",
+      "expected_evidence_categories": [
+        "profitability",
+        "growth"
+      ],
+      "expected_verdict": "NOT_SUPPORTED",
+      "acceptable_verdicts": [
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Revenue also declined in FY2025, weakening the 'scaling' premise.",
+          "keywords": [
+            "latest period",
+            "revenue"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Operating margin trend reported with fiscal years"
+      ],
+      "notes": "Operating margin 17.0% (FY2022) -> 9.2% -> 7.9% -> 5.1% (FY2025). Revenue 81.46B -> 96.77B -> 97.69B -> 94.83B."
+    },
+    {
+      "id": "NKE-01",
+      "category": "contradicted",
+      "ticker": "NKE",
+      "hypothesis": "Nike's profitability is improving while revenue grows.",
+      "research_objective": "Test profitability and revenue direction.",
+      "expected_evidence_categories": [
+        "profitability",
+        "growth"
+      ],
+      "expected_verdict": "NOT_SUPPORTED",
+      "acceptable_verdicts": [
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FY2026 margin and revenue stabilised versus FY2025, so the latest year alone is flat rather than falling.",
+          "keywords": [
+            "latest period",
+            "stabil",
+            "flat"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Margin and revenue declines reported"
+      ],
+      "notes": "Revenue US$51.22B (FY2023) -> 51.36B -> 46.31B -> 46.40B (FY2026). Operating margin 11.5% -> 12.3% -> 8.0% -> 8.2%. Net income 5.07B -> 5.70B -> 3.22B -> 3.11B."
+    },
+    {
+      "id": "GOOGL-01",
+      "category": "contradicted",
+      "ticker": "GOOGL",
+      "hypothesis": "Alphabet is overvalued relative to its historical earnings growth.",
+      "research_objective": "Compare valuation multiples with historical EPS growth.",
+      "expected_evidence_categories": [
+        "valuation",
+        "growth"
+      ],
+      "expected_verdict": "NOT_SUPPORTED",
+      "acceptable_verdicts": [
+        "NOT_SUPPORTED",
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "PEG is backward-looking; historical EPS growth may not persist, and thresholds are conventions.",
+          "keywords": [
+            "convention",
+            "threshold",
+            "backward",
+            "historical"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "P/E and EPS growth both reported"
+      ],
+      "notes": "Trailing P/E 14.3; diluted EPS 4.56 (FY2022) -> 5.80 -> 8.04 -> 10.81 (FY2025), CAGR ~33%. Computed PEG ~0.4; Yahoo trailing PEG 0.94."
+    },
+    {
+      "id": "AAPL-01",
+      "category": "partially_supported",
+      "ticker": "AAPL",
+      "hypothesis": "Apple is experiencing improving profitability despite slowing revenue growth.",
+      "research_objective": "Test profitability direction and the direction of revenue growth rates.",
+      "expected_evidence_categories": [
+        "profitability",
+        "growth"
+      ],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": [
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Revenue growth accelerated (2.0% FY2024 -> 6.4% FY2025 -> 15.1% FY2026), contradicting the 'slowing growth' premise.",
+          "keywords": [
+            "accelerat",
+            "revenue growth",
+            "increasing"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Profitability improvement confirmed",
+        "Growth acceleration identified as contradicting"
+      ],
+      "notes": "Operating margin 29.8% (FY2023) -> 31.5% -> 32.0% -> 33.0% (FY2026); net income 97.0B -> 93.7B -> 112.0B -> 132.2B; revenue growth 2.0%, 6.4%, 15.1%."
+    },
+    {
+      "id": "F-01",
+      "category": "partially_supported",
+      "ticker": "F",
+      "hypothesis": "Ford's revenue growth is strong, but rising debt weakens the investment thesis.",
+      "research_objective": "Test the level of revenue growth and the direction of debt.",
+      "expected_evidence_categories": [
+        "growth",
+        "leverage"
+      ],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": [
+        "PARTIALLY_SUPPORTED",
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Most of Ford's debt sits in Ford Credit (captive finance), so consolidated leverage overstates industrial leverage.",
+          "keywords": [
+            "captive",
+            "ford credit",
+            "finance arm",
+            "financing"
+          ]
+        },
+        {
+          "description": "Net income and operating income turned negative in FY2025 while operating cash flow rose.",
+          "keywords": [
+            "net income",
+            "operating income",
+            "loss"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Revenue growth level reported",
+        "Debt trend reported"
+      ],
+      "notes": "Revenue growth FY2023 11.5%, FY2024 5.0%, FY2025 1.2%. Total debt US$140.5B (FY2022) -> 151.1B -> 160.9B -> 165.7B."
+    },
+    {
+      "id": "META-01",
+      "category": "conflicting_metrics",
+      "ticker": "META",
+      "hypothesis": "Meta's improving profitability is translating into stronger free cash flow.",
+      "research_objective": "Test whether profitability gains are converting into free cash flow.",
+      "expected_evidence_categories": [
+        "profitability",
+        "cash_flow"
+      ],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": [
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "Capex nearly doubled in FY2025 (US$37B -> US$70B), cutting free cash flow despite higher operating cash flow.",
+          "keywords": [
+            "capex",
+            "capital expenditure",
+            "cash generation diverge"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "FY2025 FCF decline identified",
+        "Capex explanation investigated"
+      ],
+      "notes": "Operating margin 24.8% (FY2022) -> 34.7% -> 42.2% -> 41.4%. FCF 19.29B -> 44.07B -> 54.07B -> 46.11B. Capex 31.2B -> 27.1B -> 37.3B -> 69.7B."
+    },
+    {
+      "id": "KO-01",
+      "category": "conflicting_metrics",
+      "ticker": "KO",
+      "hypothesis": "Coca-Cola's operating margins are improving but its cash conversion is deteriorating.",
+      "research_objective": "Test operating margin direction and operating-cash-flow-to-net-income conversion.",
+      "expected_evidence_categories": [
+        "profitability",
+        "cash_flow"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FY2024 operating cash flow was depressed by one-off payments that the statements do not label; working capital should be examined.",
+          "keywords": [
+            "one-off",
+            "one-time",
+            "non-recurring",
+            "working capital"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Both directions reported",
+        "Cash-flow drivers investigated"
+      ],
+      "notes": "Operating margin 28.0% (FY2022) -> 28.6% -> 29.8% -> 31.1%. OCF/net income 115% -> 108% -> 64% -> 57%."
+    },
+    {
+      "id": "AMZN-01",
+      "category": "period_dependent",
+      "ticker": "AMZN",
+      "hypothesis": "Amazon's free cash flow has been improving.",
+      "research_objective": "Test the direction of free cash flow and its sensitivity to the period chosen.",
+      "expected_evidence_categories": [
+        "cash_flow"
+      ],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": [
+        "PARTIALLY_SUPPORTED",
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FCF fell from US$32.9B to US$7.7B in FY2025 as capex rose to US$132B, although operating cash flow kept rising.",
+          "keywords": [
+            "latest period",
+            "capex",
+            "capital expenditure"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Multi-year improvement and FY2025 reversal both reported"
+      ],
+      "notes": "FCF -16.89B (FY2022) -> 32.22B -> 32.88B -> 7.70B (FY2025). OCF 46.75B -> 84.95B -> 115.88B -> 139.51B. Capex 63.6B -> 52.7B -> 83.0B -> 131.8B."
+    },
+    {
+      "id": "BA-01",
+      "category": "period_dependent",
+      "ticker": "BA",
+      "hypothesis": "Boeing is becoming financially healthier.",
+      "research_objective": "Assess margins, earnings, cash flow and debt together.",
+      "expected_evidence_categories": [
+        "profitability",
+        "cash_flow",
+        "leverage"
+      ],
+      "expected_verdict": "PARTIALLY_SUPPORTED",
+      "acceptable_verdicts": [
+        "PARTIALLY_SUPPORTED",
+        "NOT_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "FY2025 net income was positive despite an operating loss, implying non-operating or one-time gains.",
+          "keywords": [
+            "non-operating",
+            "one-time"
+          ]
+        },
+        {
+          "description": "Stockholders' equity was negative in FY2023-FY2024, so debt-to-equity is not meaningful there.",
+          "keywords": [
+            "negative",
+            "equity"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "FY2025 vs FY2024 improvement and multi-year deterioration both reported",
+        "Earnings quality questioned"
+      ],
+      "notes": "Operating margin -5.3% (FY2022) -> -1.1% -> -16.3% -> -6.1%. Net income -4.93B -> -2.22B -> -11.82B -> 2.23B. FCF 2.29B -> 4.43B -> -14.40B -> -1.89B. Debt 57.3B -> 52.6B -> 54.2B -> 54.4B."
+    },
+    {
+      "id": "SBUX-01",
+      "category": "period_dependent",
+      "ticker": "SBUX",
+      "hypothesis": "Starbucks' operating margins are recovering after the 2025 trough.",
+      "research_objective": "Test operating margin direction from FY2025 onward.",
+      "expected_evidence_categories": [
+        "profitability"
+      ],
+      "expected_verdict": "SUPPORTED",
+      "acceptable_verdicts": [
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED"
+      ],
+      "important_caveats": [
+        {
+          "description": "The FY2026 margin (10.8%) remains well below FY2023 (15.3%); the recovery covers a single year.",
+          "keywords": [
+            "below",
+            "single",
+            "only one",
+            "fy2023"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Window starting FY2025 respected",
+        "Comparison with pre-trough levels"
+      ],
+      "notes": "Operating margin 15.3% (FY2023) -> 14.1% -> 9.6% (FY2025) -> 10.8% (FY2026)."
+    },
+    {
+      "id": "MRNA-01",
+      "category": "insufficient_evidence",
+      "ticker": "MRNA",
+      "hypothesis": "Moderna is overvalued relative to its earnings growth.",
+      "research_objective": "Compare valuation with earnings growth.",
+      "expected_evidence_categories": [
+        "valuation",
+        "profitability"
+      ],
+      "expected_verdict": "INSUFFICIENT_EVIDENCE",
+      "acceptable_verdicts": [
+        "INSUFFICIENT_EVIDENCE"
+      ],
+      "important_caveats": [
+        {
+          "description": "Moderna has negative EPS, so P/E and PEG are undefined; valuation relative to earnings growth cannot be measured.",
+          "keywords": [
+            "not positive",
+            "negative",
+            "undefined",
+            "not meaningful"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "Does not force a valuation verdict from undefined multiples"
+      ],
+      "notes": "Diluted EPS 20.12 (FY2022) -> -12.33 -> -9.28 -> -7.26 (FY2025); trailing P/E not reported."
+    },
+    {
+      "id": "DIS-01",
+      "category": "insufficient_evidence",
+      "ticker": "DIS",
+      "hypothesis": "Disney's streaming segment has become the main driver of its operating income growth.",
+      "research_objective": "Attribute operating income growth to segments.",
+      "expected_evidence_categories": [
+        "profitability",
+        "growth"
+      ],
+      "expected_verdict": "INSUFFICIENT_EVIDENCE",
+      "acceptable_verdicts": [
+        "INSUFFICIENT_EVIDENCE"
+      ],
+      "important_caveats": [
+        {
+          "description": "Segment-level operating income is not available from consolidated yfinance statements.",
+          "keywords": [
+            "segment"
+          ]
+        }
+      ],
+      "evaluation_criteria": [
+        "States that segment data is unavailable rather than inferring from consolidated figures"
+      ],
+      "notes": "Consolidated operating income rose 8.99B (FY2023) -> 16.50B (FY2026), but no segment breakdown exists in the data source."
+    }
+  ]
+}

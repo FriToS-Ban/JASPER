@@ -66,6 +66,18 @@ async def run_hybrid_analysis(payload: Dict) -> Dict:
     return _load_orchestrator_result("hybrid_analysis", payload)
 
 
+async def run_critique(payload: Dict) -> Dict:
+    """Critique the latest analysis iteration and record the branching decision."""
+
+    return _load_orchestrator_result("critique", payload)
+
+
+async def run_claim_verification(payload: Dict) -> Dict:
+    """Extract claims from the generated narrative and verify them against evidence."""
+
+    return _load_orchestrator_result("claim_verification", payload)
+
+
 async def run_detailed_analysis(payload: Dict) -> Dict:
     """Produce the LLM-backed narrative explaining analysis outputs."""
 

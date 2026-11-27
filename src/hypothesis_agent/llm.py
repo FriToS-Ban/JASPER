@@ -65,6 +65,38 @@ class BaseLLM(ABC):
     ) -> str:  # pragma: no cover - interface
         """Return Python source for executing the requested analysis."""
 
+    # ------------------------------------------------------------------
+    # Research-agent capabilities. Defaults keep older adapters working: an adapter that does not
+    # implement them simply contributes nothing, and the deterministic agent still runs.
+    # ------------------------------------------------------------------
+    def propose_research_plan(
+        self, request: HypothesisRequest, catalogue: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        """Optionally propose expectations/metrics. Output is validated before use."""
+
+        return None
+
+    def choose_next_analysis_action(
+        self, request: HypothesisRequest, briefing: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        """Optionally pick the next analytical tool call ({"tool", "arguments", "rationale"})."""
+
+        return None
+
+    def critique_analysis(
+        self, request: HypothesisRequest, briefing: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        """Optionally add critique issues / metric requests. Cannot override deterministic checks."""
+
+        return None
+
+    def generate_research_narrative(
+        self, request: HypothesisRequest, briefing: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Return {"narrative": str, ...}. Defaults to the legacy free-text narrative."""
+
+        return {"narrative": self.generate_detailed_analysis(request, briefing)}
+
 
 @dataclass(slots=True)
 class NvidiaLLM(BaseLLM):
@@ -81,6 +113,8 @@ class NvidiaLLM(BaseLLM):
         self._client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=self.api_key,
+            timeout=180.0,
+            max_retries=2,
         )
         if self.telemetry is None:
             self.telemetry = PIPELINE_TELEMETRY
@@ -147,7 +181,10 @@ class NvidiaLLM(BaseLLM):
     ) -> Dict[str, Any]:
         system_prompt = (
             "You are an analyst preparing a client-facing investment memo. Respond with a JSON object containing the "
-            "keys 'executive_summary', 'key_findings' (array), 'risks' (array), and 'next_steps' (array)."
+            "keys 'executive_summary', 'key_findings' (array), 'risks' (array), and 'next_steps' (array). "
+            "If the metrics include 'key_evidence', use only those figures, cite each with its evidence_id in square "
+            "brackets (e.g. [EV-1a2b3c4d]), state fiscal years, and state the verdict exactly as given. Every figure "
+            "you write will be checked automatically against the evidence registry."
         )
         user_prompt = (
             "Hypothesis: {hypothesis}\nMetrics: {metrics}\nNarrative summary: {summary}\nArtifacts: {artifacts}".format(
@@ -191,6 +228,66 @@ class NvidiaLLM(BaseLLM):
         user_prompt = json.dumps(user_payload, ensure_ascii=False, indent=2)
         return self._chat(system_prompt, user_prompt, operation="generate_analysis_code")
 
+    def propose_research_plan(self, request: HypothesisRequest, catalogue: Dict[str, Any]) -> Dict[str, Any] | None:
+        system_prompt = (
+            "You plan quantitative tests of investment hypotheses. Translate the hypothesis into expectations about "
+            "metrics from the provided catalogue. Respond with JSON: {\"expectations\": [{\"concept\": str, "
+            "\"metric\": catalogue key or null if no catalogue metric can measure it, \"direction\": one of "
+            "increase|decrease|above|below|positive|negative|overvalued|undervalued|unmeasurable, \"threshold\": "
+            "number or null, \"rationale\": str}], \"additional_metrics\": [catalogue keys]}. Never invent metric keys."
+        )
+        user_prompt = json.dumps({
+            "hypothesis": request.hypothesis_text,
+            "entities": request.entities,
+            "catalogue": catalogue,
+        }, ensure_ascii=False)
+        content = self._chat(system_prompt, user_prompt, operation="propose_research_plan", json_mode=True)
+        payload = self._parse_json(content)
+        return payload if isinstance(payload, dict) else None
+
+    def choose_next_analysis_action(self, request: HypothesisRequest, briefing: Dict[str, Any]) -> Dict[str, Any] | None:
+        system_prompt = (
+            "You are a quantitative analyst driving a toolbox of deterministic financial tools. Look at the "
+            "expectations, the metrics already available and the recent tool calls, then choose ONE next tool call "
+            "that would most improve the test of the hypothesis (e.g. a missing ratio, a growth rate, a trend over a "
+            "specific window, a correlation). Do not repeat calls already made. If the evidence is sufficient, choose "
+            "\"finish\". Respond with JSON: {\"tool\": name or \"finish\", \"arguments\": {...}, \"rationale\": str}."
+        )
+        user_prompt = json.dumps(briefing, ensure_ascii=False, default=str)
+        content = self._chat(system_prompt, user_prompt, operation="choose_next_analysis_action", json_mode=True)
+        payload = self._parse_json(content)
+        return payload if isinstance(payload, dict) else None
+
+    def critique_analysis(self, request: HypothesisRequest, briefing: Dict[str, Any]) -> Dict[str, Any] | None:
+        system_prompt = (
+            "You are a sceptical reviewer of an equity analysis. Deterministic checks have already run (listed). "
+            "Identify additional problems: missing metrics that matter for this hypothesis, ignored contradictory "
+            "evidence, inappropriate time periods, unsupported assumptions. Only reference metric keys from "
+            "allowed_metrics. Respond with JSON: {\"issues\": [{\"severity\": low|medium|high, \"description\": str, "
+            "\"metrics\": [keys]}], \"additional_metrics\": [keys], \"notes\": str}. Return empty lists if nothing is wrong."
+        )
+        user_prompt = json.dumps(briefing, ensure_ascii=False, default=str)
+        content = self._chat(system_prompt, user_prompt, operation="critique_analysis", json_mode=True)
+        payload = self._parse_json(content)
+        return payload if isinstance(payload, dict) else None
+
+    def generate_research_narrative(self, request: HypothesisRequest, briefing: Dict[str, Any]) -> Dict[str, Any]:
+        system_prompt = (
+            "You are an equity research associate writing the analysis section of an auditable research report. "
+            "Follow the rules in the briefing exactly: use only figures from key_evidence, cite every figure with "
+            "its evidence_id in square brackets, state fiscal years, state the verdict exactly as given, and describe "
+            "contradicting evidence. If 'corrections' are present, they list claims that failed automated "
+            "verification in your previous draft: fix or remove them. Respond with JSON: {\"executive_summary\": str "
+            "(2-3 sentences), \"narrative\": str (one to three paragraphs), \"supporting_points\": [str], "
+            "\"contradicting_points\": [str], \"limitations\": [str]}."
+        )
+        user_prompt = json.dumps(briefing, ensure_ascii=False, default=str)
+        content = self._chat(system_prompt, user_prompt, operation="generate_research_narrative", json_mode=True)
+        payload = self._parse_json(content)
+        if not isinstance(payload, dict) or not payload.get("narrative"):
+            raise LLMError("Research narrative response missing 'narrative'")
+        return payload
+
     def _chat(self, system_prompt: str, user_prompt: str, *, operation: str, json_mode: bool = False) -> str:
         kwargs = {
             "model": self.model,
@@ -223,11 +320,11 @@ class NvidiaLLM(BaseLLM):
                     response = self._client.chat.completions.create(**kwargs)
                     latency = time.perf_counter() - start_time
                 except Exception as retry_exc:  # pragma: no cover - network failures
-                    raise LLMError("OpenAI request failed") from retry_exc
+                    raise LLMError(f"LLM request failed ({self.model}): {type(retry_exc).__name__}: {retry_exc}") from retry_exc
             else:
-                raise LLMError("OpenAI request failed") from exc
+                raise LLMError(f"LLM request failed ({self.model}): {type(exc).__name__}: {exc}") from exc
         except Exception as exc:  # pragma: no cover - network failures
-            raise LLMError("OpenAI request failed") from exc
+            raise LLMError(f"LLM request failed ({self.model}): {type(exc).__name__}: {exc}") from exc
 
         try:
             message = response.choices[0].message.content or ""
