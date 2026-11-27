@@ -1,4 +1,12 @@
-"""Local workflow runner for hypothesis validation using LangGraph."""
+"""Local workflow runner for hypothesis validation on the LangGraph research graph.
+
+Each run is a thread of the compiled research graph in a checkpointer owned by the client. The
+client streams the graph's task events to keep per-stage milestones current (RUNNING when a node
+starts, COMPLETED or BLOCKED when it ends); stage code runs in LangGraph's executor threads so the
+event loop stays free. ``human_review`` pauses the thread with ``interrupt()`` and
+:meth:`HypothesisWorkflowClient.resume` continues it from the checkpoint with
+``Command(resume=decision)``, which runs the review node and then delivery.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +14,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple
 from uuid import UUID
+
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
 
 from hypothesis_agent.models.hypothesis import (
     EvidenceReference,
@@ -15,25 +27,13 @@ from hypothesis_agent.models.hypothesis import (
     WorkflowMilestone,
 )
 from hypothesis_agent.orchestration.langgraph_pipeline import (
+    MAX_STAGE_EXECUTIONS,
     LangGraphValidationOrchestrator,
     StageExecutionResult,
 )
+from hypothesis_agent.research.agent import STAGES
 
 logger = logging.getLogger(__name__)
-
-_PIPELINE_STAGES: List[str] = [
-    "plan_generation",
-    "data_collection",
-    "hybrid_analysis",
-    "critique",
-    "detailed_analysis",
-    "claim_verification",
-    "report_generation",
-    "delivery",
-]
-# Defence in depth: the research router is bounded by its own iteration limits, but the client
-# also refuses to execute more than this many stages for one workflow.
-_MAX_STAGE_EXECUTIONS = 40
 
 
 @dataclass(slots=True)
@@ -63,8 +63,6 @@ class LocalWorkflowRun:
     context: Dict[str, Any]
     summary: ValidationSummary
     awaiting_review: bool
-    pending_summary_base: ValidationSummary | None = None
-    report_milestone: WorkflowMilestone | None = None
     completed: bool = False
     cancelled: bool = False
 
@@ -80,6 +78,9 @@ class HypothesisWorkflowClient:
 
     _local_runs: Dict[Tuple[str, str], LocalWorkflowRun] = field(default_factory=dict, init=False, repr=False)
     _tasks: Dict[Tuple[str, str], asyncio.Task[None]] = field(default_factory=dict, init=False, repr=False)
+    # Shared by every orchestrator instance the client creates, so a run paused for review by one
+    # orchestrator is resumed from its checkpoint by another.
+    _checkpointer: InMemorySaver = field(default_factory=InMemorySaver, init=False, repr=False)
 
     async def submit(self, hypothesis_id: UUID, hypothesis: HypothesisRequest) -> WorkflowSubmissionResult:
         """Schedule the validation pipeline and return tracking metadata."""
@@ -107,8 +108,6 @@ class HypothesisWorkflowClient:
             context=context,
             summary=initial_summary,
             awaiting_review=False,
-            pending_summary_base=None,
-            report_milestone=None,
             completed=False,
             cancelled=False,
         )
@@ -169,54 +168,13 @@ class HypothesisWorkflowClient:
         if not local_run.awaiting_review:
             return local_run.summary
 
-        base_summary = local_run.pending_summary_base or local_run.summary
-        human_milestone = WorkflowMilestone(
-            name="human_review",
-            status=MilestoneStatus.COMPLETED,
-            detail=f"Human decision: {decision}.",
-        )
-        milestones = self._merge_milestone(local_run, human_milestone, include_human=True)
-        summary_after_review = base_summary.model_copy(
-            update={
-                "milestones": milestones,
-                "current_stage": "human_review",
-            }
-        )
-        local_run.summary = summary_after_review
         local_run.awaiting_review = False
         local_run.cancelled = False
-        metadata = local_run.context.setdefault("metadata", {})
-        metadata["human_review"] = {"required": True, "decision": decision}
-        self._local_runs[key] = local_run
-
+        # A fresh orchestrator continues the paused thread from the shared checkpointer: the
+        # human_review node receives the decision, then delivery runs on the checkpointed context.
         orchestrator = LangGraphValidationOrchestrator()
-        self._mark_stage_running(key, "delivery")
-        await asyncio.sleep(0)
-        try:
-            delivery_stage = await asyncio.to_thread(
-                orchestrator.run_stage,
-                "delivery",
-                local_run.hypothesis,
-                local_run.context,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            self._handle_stage_failure(key, "delivery", exc)
-            raise
-
-        self._record_stage_metadata(delivery_stage.context, delivery_stage)
-        self._apply_stage_result(key, delivery_stage, summary_override=summary_after_review)
-
-        updated_run = self._local_runs[key]
-        updated_run.awaiting_review = False
-        updated_run.completed = True
-        updated_run.pending_summary_base = None
-        updated_run.report_milestone = delivery_stage.milestone
-        updated_run.cancelled = False
-        metadata = updated_run.context.setdefault("metadata", {})
-        metadata["human_review"] = {"required": True, "decision": decision}
-        self._local_runs[key] = updated_run
-        self._tasks.pop(key, None)
-        return updated_run.summary
+        await self._advance(key, orchestrator, Command(resume=decision))
+        return self._local_runs[key].summary
 
     async def fetch_summary(self, workflow_id: str, workflow_run_id: str) -> ValidationSummary:
         """Retrieve the current validation summary for a workflow."""
@@ -285,11 +243,10 @@ class HypothesisWorkflowClient:
         local_run.awaiting_review = False
         local_run.completed = True
         local_run.cancelled = True
-        local_run.pending_summary_base = None
-        local_run.report_milestone = None
         metadata = local_run.context.setdefault("metadata", {})
         metadata["cancelled"] = True
         self._local_runs[key] = local_run
+        self._discard_checkpoints(key)
         return summary
 
     def _generate_run_id(self, workflow_id: str) -> str:
@@ -300,12 +257,19 @@ class HypothesisWorkflowClient:
             counter += 1
         return run_id
 
+    @staticmethod
+    def _thread_id(key: Tuple[str, str]) -> str:
+        """Checkpoint thread of a run: one thread per workflow id and run id."""
+
+        return f"{key[0]}:{key[1]}"
+
+    def _discard_checkpoints(self, key: Tuple[str, str]) -> None:
+        """Drop a finished run's checkpoints; only a run paused for review needs them."""
+
+        self._checkpointer.delete_thread(self._thread_id(key))
+
     def _stage_sequence(self, include_human_review: bool) -> List[str]:
-        stages = list(_PIPELINE_STAGES)
-        if include_human_review and "human_review" not in stages:
-            delivery_index = stages.index("delivery")
-            stages.insert(delivery_index, "human_review")
-        return stages
+        return [stage for stage in STAGES if include_human_review or stage != "human_review"]
 
     def _build_initial_summary(self, include_human_review: bool) -> ValidationSummary:
         stages = self._stage_sequence(include_human_review)
@@ -336,72 +300,62 @@ class HypothesisWorkflowClient:
         if local_run is None:
             return
 
-        context = local_run.context
+        try:
+            await self._advance(key, orchestrator, orchestrator.graph_input(hypothesis, local_run.context))
+        except Exception:
+            return  # already recorded as a BLOCKED milestone
 
-        # Follow the research router: critique may loop back to data collection or analysis, and
-        # claim verification may send the narrative back for correction, within bounded limits.
-        stage: str | None = "plan_generation"
-        executed = 0
-        while stage is not None and stage not in {"human_review", "delivery"}:
-            executed += 1
-            if executed > _MAX_STAGE_EXECUTIONS:
-                self._handle_stage_failure(
-                    key, stage, RuntimeError(f"Stage budget of {_MAX_STAGE_EXECUTIONS} executions exhausted.")
-                )
-                return
-            context = await self._run_single_stage(key, orchestrator, stage, hypothesis, context)
-            if context is None:
-                return
-            if stage == "report_generation":
-                break
-            stage = orchestrator.next_stage(stage, hypothesis, context)
-
-        summary_after_report = self._local_runs[key].summary
-        self._local_runs[key].report_milestone = next(
-            (milestone for milestone in summary_after_report.milestones if milestone.name == "report_generation"),
-            None,
-        )
-
-        if hypothesis.requires_human_review or orchestrator.human_review_requested(context):
-            self._prepare_human_review(key, summary_after_report)
-            self._tasks.pop(key, None)
-            return
-
-        context = await self._run_single_stage(key, orchestrator, "delivery", hypothesis, context)
-        if context is None:
-            return
-
-        final_run = self._local_runs[key]
-        final_run.context = context
-        final_run.completed = True
-        final_run.awaiting_review = False
-        final_run.pending_summary_base = None
-        final_run.cancelled = False
-        metadata = final_run.context.setdefault("metadata", {})
-        metadata["human_review"] = {"required": False, "decision": "auto"}
-        self._local_runs[key] = final_run
-        self._tasks.pop(key, None)
-
-    async def _run_single_stage(
+    async def _advance(
         self,
         key: Tuple[str, str],
         orchestrator: LangGraphValidationOrchestrator,
-        stage: str,
-        hypothesis: HypothesisRequest,
-        context: Dict[str, Any],
-    ) -> Dict[str, Any] | None:
-        self._mark_stage_running(key, stage)
-        await asyncio.sleep(0)
-        try:
-            result = await asyncio.to_thread(orchestrator.run_stage, stage, hypothesis, context)
-        except Exception as exc:  # pragma: no cover - defensive
-            self._handle_stage_failure(key, stage, exc)
-            return None
+        graph_input: Any,
+    ) -> None:
+        """Stream the run's graph thread until it finishes, pauses for review or fails.
 
-        self._record_stage_metadata(result.context, result)
-        self._apply_stage_result(key, result)
-        await asyncio.sleep(0)
-        return result.context
+        ``graph_input`` is the initial state for a new run or ``Command(resume=...)`` for a paused
+        one. Failures are recorded as a BLOCKED milestone on the failing stage and re-raised.
+        """
+
+        config = orchestrator.graph_config(thread_id=self._thread_id(key))
+        stage = "plan_generation"
+        review_request: Dict[str, Any] | None = None
+        try:
+            graph = orchestrator.build_graph(checkpointer=self._checkpointer, record_stage_status=True)
+            # "tasks" mode emits an event when a node starts and another when it finishes.
+            async for event in graph.astream(graph_input, config, stream_mode="tasks"):
+                stage = event["name"]
+                if "input" in event:
+                    if stage != "human_review":  # the review milestone goes straight to WAITING_REVIEW
+                        self._mark_stage_running(key, stage)
+                elif event["interrupts"]:
+                    review_request = event["interrupts"][0]["value"]
+                elif event["error"] is None:
+                    self._apply_stage_result(key, StageExecutionResult.from_graph_update(event["result"]))
+        except GraphRecursionError as exc:
+            snapshot = await graph.aget_state(config)
+            budget = RuntimeError(f"Stage budget of {MAX_STAGE_EXECUTIONS} executions exhausted.")
+            self._handle_stage_failure(key, snapshot.next[0] if snapshot.next else stage, budget)
+            raise budget from exc
+        except Exception as exc:
+            self._handle_stage_failure(key, stage, exc)
+            raise
+
+        if review_request is not None:
+            self._prepare_human_review(key, review_request.get("reason"))
+        else:
+            self._complete_run(key)
+        self._tasks.pop(key, None)
+
+    def _complete_run(self, key: Tuple[str, str]) -> None:
+        local_run = self._local_runs[key]
+        local_run.completed = True
+        local_run.awaiting_review = False
+        local_run.cancelled = False
+        metadata = local_run.context.setdefault("metadata", {})
+        if not (metadata.get("human_review") or {}).get("required"):
+            metadata["human_review"] = {"required": False, "decision": "auto"}
+        self._discard_checkpoints(key)
 
     def _mark_stage_running(self, key: Tuple[str, str], stage: str) -> None:
         local_run = self._local_runs.get(key)
@@ -445,6 +399,7 @@ class HypothesisWorkflowClient:
         metadata.setdefault("human_review", {"required": False, "decision": None})
         self._local_runs[key] = local_run
         self._tasks.pop(key, None)
+        self._discard_checkpoints(key)
         logger.exception(
             "Pipeline stage %s failed for workflow %s/%s",
             stage,
@@ -453,19 +408,12 @@ class HypothesisWorkflowClient:
             exc_info=True,
         )
 
-    def _apply_stage_result(
-        self,
-        key: Tuple[str, str],
-        result: StageExecutionResult,
-        *,
-        summary_override: ValidationSummary | None = None,
-    ) -> None:
+    def _apply_stage_result(self, key: Tuple[str, str], result: StageExecutionResult) -> None:
         local_run = self._local_runs.get(key)
         if local_run is None:
             return
 
-        base_summary = summary_override or local_run.summary
-        summary_source = result.summary or base_summary
+        summary_source = result.summary or local_run.summary
         milestones = self._merge_milestone(local_run, result.milestone)
         evidence = self._merge_evidence(summary_source.evidence, result.evidence)
         summary = summary_source.model_copy(
@@ -479,9 +427,6 @@ class HypothesisWorkflowClient:
         local_run.context = result.context
         local_run.completed = False
         local_run.cancelled = False
-        if result.milestone.name == "report_generation":
-            local_run.pending_summary_base = summary
-            local_run.report_milestone = result.milestone
         self._local_runs[key] = local_run
 
     def _merge_milestone(
@@ -507,18 +452,19 @@ class HypothesisWorkflowClient:
         merged.extend(milestone_map.values())
         return merged
 
-    def _prepare_human_review(self, key: Tuple[str, str], summary_base: ValidationSummary) -> None:
+    def _prepare_human_review(self, key: Tuple[str, str], reason: str | None) -> None:
+        """Show the run as paused for review; ``reason`` is the agent's escalation, if any."""
+
         local_run = self._local_runs.get(key)
         if local_run is None:
             return
-        reason = ((local_run.context.get("research") or {}).get("human_review") or {}).get("reason")
         human_milestone = WorkflowMilestone(
             name="human_review",
             status=MilestoneStatus.WAITING_REVIEW,
             detail=f"Awaiting human reviewer decision. Agent escalation: {reason}" if reason else "Awaiting human reviewer decision.",
         )
         milestones = self._merge_milestone(local_run, human_milestone, include_human=True)
-        summary = summary_base.model_copy(
+        summary = local_run.summary.model_copy(
             update={
                 "milestones": milestones,
                 "current_stage": "human_review",
@@ -527,7 +473,6 @@ class HypothesisWorkflowClient:
         local_run.summary = summary
         local_run.awaiting_review = True
         local_run.completed = False
-        local_run.pending_summary_base = summary_base
         metadata = local_run.context.setdefault("metadata", {})
         metadata["human_review"] = {"required": True, "decision": None}
         self._local_runs[key] = local_run
@@ -559,11 +504,3 @@ class HypothesisWorkflowClient:
                 key[1],
                 exc_info=True,
             )
-
-    def _record_stage_metadata(self, context: Dict[str, Any], result: StageExecutionResult) -> None:
-        metadata = context.setdefault("metadata", {})
-        stages = metadata.setdefault("stages", {})
-        stages[result.milestone.name] = {
-            "status": result.milestone.status.value,
-            "detail": result.milestone.detail,
-        }
