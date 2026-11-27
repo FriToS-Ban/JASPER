@@ -175,6 +175,27 @@ async def test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIter
 
 
 @pytest.mark.asyncio
+async def test_status_shows_the_finished_report_while_awaiting_review(test_app) -> None:
+    payload = {
+        "user_id": "reviewer-test",
+        "hypothesis_text": "Company X EBITDA margin improves by 200 bps next year.",
+        "entities": ["Company X"],
+        "time_horizon": {"start": date(2025, 1, 1).isoformat(), "end": date(2025, 12, 31).isoformat()},
+        "requires_human_review": True,
+    }
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        hypothesis_id = UUID((await client.post("/v1/hypotheses", json=payload)).json()["hypothesis_id"])
+        status_data = await _poll_status_response(client, hypothesis_id)
+    assert status_data["workflow_status"] == "AWAITING_REVIEW"
+    assert status_data["status"] == "awaiting_review"
+    validation = status_data["validation"]
+    assert validation["current_stage"] == "human_review"
+    assert validation["verdict"] is not None and validation["conclusion"] != "Pending validation"
+    assert any(m["name"] == "human_review" and m["status"] == "waiting_review" for m in validation["milestones"])
+
+
+@pytest.mark.asyncio
 async def test_submit_and_retrieve_hypothesis(test_app) -> None:
     """Verify submission persists state and retrieval returns the stored record."""
 
