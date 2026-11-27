@@ -19,6 +19,29 @@ outside it end in `INSUFFICIENT_EVIDENCE`, which is the intended behaviour, not 
 code-generation path remains available behind `ENABLE_CODEGEN_ANALYSIS`, and its outputs are
 labelled unverified and excluded from the verdict.
 
+**The LLM layer is LangChain.** `NvidiaLLM` wraps `langchain_openai.ChatOpenAI` pointed at NVIDIA
+NIM's OpenAI-compatible endpoint. Plan proposals, critique, narrative, report and rubric-judge
+responses are parsed into pydantic models with `with_structured_output(method="json_schema")`,
+which NIM enforces during generation; this was checked live on the benchmark generator
+(`nemotron-3.5-lightning`) and judge (`minimax-m3.1-flash`). If a reply still does not parse,
+the raw message is re-read, then the call is retried once in JSON mode; plan and critique
+payloads that fail both fall through to the existing per-item validators, which record
+rejections. The research tools are exposed as LangChain `StructuredTool`s built from the same
+pydantic argument models (`ResearchToolbox.as_langchain_tools`), and the tool-choice step binds
+them for native function calling. The tool functions call `ResearchToolbox.invoke`, and LangChain's
+own argument parsing is bypassed, so validation, the ticker allow-list, the call budget and the
+call log stay in one place: a malformed or disallowed call is rejected and logged exactly as
+before. Adapters without function calling (the offline narrator, test doubles) use the default
+`BaseLLM.choose_next_tool_call`, which falls back to the JSON action.
+
+*Why:* the previous adapter described each schema in prose and parsed the reply by hand, so a
+reply wrapped in text or with a missing key cost that step its LLM contribution, and the old
+tool-choice prompt described tools in free text. Structured output and bound tool schemas give
+the model the exact contract, while the deterministic layer keeps the final say. The port was
+checked for parity: offline benchmark results are identical, and a live NVDA-01 run completed with
+the expected verdict, six native tool calls and no LLM errors. When reasoning models return empty
+message content with a tool call, the logged rationale is the tail of their reasoning text.
+
 ## 2. Rule-based verdict
 
 The verdict is a function of expectation statuses (`SUPPORTS`=1, `MIXED_POSITIVE`=0.65,
