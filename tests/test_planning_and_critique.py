@@ -172,3 +172,24 @@ def test_llm_critique_is_validated() -> None:
     assert actions and actions[0].metrics == [("capex_intensity", "annual")]
     assert "unicorn_index" in notes
     assert merge_llm_critique({"issues": "not a list"}, [], [], plan, 1).startswith("LLM critique rejected")
+
+
+def test_llm_escalation_requires_challenging_supporting_evidence() -> None:
+    plan = build_plan("Operating margins are improving.", "TEST")
+    assessments = [_a("SUPPORTS", metric="operating_margin"), _a("CONTRADICTS", "G2", metric="free_cash_flow")]
+    deterministic = CritiqueIssue(issue_id="I1.1", type="CONTRADICTORY_EVIDENCE", severity="high",
+                                  description="profit and cash diverge", metrics=["operating_income"])
+    issues, actions = [deterministic], []
+    notes = merge_llm_critique({"issues": [
+        {"severity": "high", "description": "Revenue recognition changed in FY2024", "metrics": ["total_revenue"]},
+        {"severity": "high", "description": "FCF fell, contradicting the thesis", "metrics": ["free_cash_flow"]},
+        {"severity": "high", "description": "Operating income diverges from cash", "metrics": ["operating_income"]},
+        {"severity": "high", "description": "Capex intensity was not assessed", "metrics": ["capex_intensity"]},
+    ]}, issues, actions, plan, 1, assessments=assessments)
+    llm = [i for i in issues if i.source == "llm"]
+    # Only the challenge to an input of the supporting operating-margin assessment keeps high severity:
+    # the contradicted metric, the deterministically flagged metric and the unassessed one are already on record.
+    assert [i.severity for i in llm] == ["high", "medium", "medium", "medium"]
+    assert all(i.issue_id in notes for i in llm[1:]) and llm[0].issue_id not in notes
+    assert _decide(issues=issues, assessments=assessments)[0] == "HUMAN_REVIEW"
+    assert _decide(issues=[deterministic] + llm[1:], assessments=assessments)[0] == "CONTINUE"

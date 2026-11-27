@@ -85,6 +85,24 @@ the verifier caught real LLM mistakes that read plausibly in the first subset (a
 verdict overstated) but produces false flags on free-form prose that cost a retry; and the LLM
 critic escalated to human review in 8 of 18 cases, more often than the deterministic critic.
 
+### LLM-critic escalation rule (replayed, no new LLM calls)
+
+After the first subset, escalation on LLM-critic issues was restricted to issues that challenge
+evidence behind a supporting assessment and that no deterministic check already flagged
+(`docs/design-decisions.md`, section 6). `scripts/replay_critic_escalation.py` re-applies the rule
+to each run's final critique; severity only matters at the last branch of the decision policy, so
+the replayed decision is exact.
+
+| Runs | LLM-only escalations recorded | Under the rule | Notes |
+|---|---|---|---|
+| First 6 (rule written after reading them: in-sample) | 3 (AAPL, META, AMZN) | 0 | All three restated a contradicted or reversed expectation, a deterministic flag, or an unassessed metric. |
+| Remaining 12 (rule fixed before inspection) | 5 (MSFT, INTC, NKE, GOOGL, BA) | 0 | Manual reading: four restate recorded findings; INTC (FY versus TTM gap called a "source conflict") is borderline. |
+
+The rule still kept high severity on challenges to supporting evidence (WMT: two PEG values that
+disagree; SBUX: a margin "recovery" framed without its earlier peak; DIS: segment attribution), but
+in those runs the iteration limit, diminishing returns or insufficient evidence decided first, so a
+live LLM-triggered escalation under the rule has not occurred yet.
+
 The pattern in the offline probes matters too: when the deterministic parser does not understand a
 hypothesis, it abstains rather than guessing a direction. The LLM planner (`--llm nvidia`) is the intended remedy for
 coverage; its proposals are validated before use.

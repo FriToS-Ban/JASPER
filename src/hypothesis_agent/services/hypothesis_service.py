@@ -105,8 +105,13 @@ class HypothesisService:
                 }
             )
 
-        if execution.awaiting_review and status != "awaiting_review":
+        if execution.awaiting_review:
             status = "awaiting_review"
+            # The report is finished: show its verdict, claim counts and escalation reason to the reviewer.
+            validation = await self.workflow_client.fetch_summary(
+                workflow_id=record.workflow_id,
+                workflow_run_id=record.workflow_run_id,
+            )
         elif execution.status == "COMPLETED" and not execution.awaiting_review:
             final_summary = await self.workflow_client.fetch_summary(
                 workflow_id=record.workflow_id,

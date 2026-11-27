@@ -130,6 +130,19 @@ def test_llm_critic_can_escalate_to_human_review(tmp_path: Path) -> None:
     assert orchestrator.next_stage("report_generation", make_request("x"), context) == "human_review"
 
 
+def test_llm_critic_raising_unassessed_metric_does_not_escalate(tmp_path: Path) -> None:
+    llm = ScriptedLLM(critique={"issues": [{"severity": "high", "description": "Capex intensity was never assessed.",
+                                            "metrics": ["capex_intensity"]}]})
+    orchestrator = _orchestrator(tmp_path, llm=llm, toolset=SyntheticToolSet(company_payloads(healthy_cash=True)))
+    context = _run(orchestrator, "TEST's operating margins are improving.")
+    state = context["research"]
+    assert state["decision"]["status"] != "HUMAN_REVIEW"
+    assert not orchestrator.human_review_requested(context)
+    llm_issues = [i for c in state["critiques"] for i in c["issues"] if i["source"] == "llm"]
+    assert llm_issues and all(i["severity"] == "medium" for i in llm_issues)
+    assert "lowered from high to medium" in state["critiques"][-1]["llm_notes"]
+
+
 @pytest.mark.asyncio
 async def test_workflow_client_pauses_when_agent_requests_review(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     llm = ScriptedLLM(critique={"issues": [{"severity": "high", "description": "Accounting change.", "metrics": ["total_revenue"]}]})

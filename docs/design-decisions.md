@@ -112,6 +112,20 @@ resume API works unchanged, and the paused run is a real checkpoint rather than 
 of the summary. Checkpoints are in memory, like the workflow client's run table, so a server
 restart loses paused runs; a persistent checkpointer (e.g. SQLite) is the upgrade path.
 
+**When the LLM critic may escalate.** A high-severity LLM issue triggers review only if it names a
+metric that a `SUPPORTS` assessment rests on (the assessed metric or one of its raw inputs, e.g.
+total revenue behind an operating-margin trend) and that no deterministic issue in the same
+critique already names (`critique.py:escalation_metrics`). Other high-severity LLM issues are kept
+in the report at medium severity, and the critique notes list which ones were lowered.
+
+*Why:* in the first live run, every LLM-only escalation repeated something already on record: a
+contradicted or reversed expectation that had already lowered the verdict, a profit/cash divergence
+the deterministic critic had flagged, or a metric no expectation tested. A reviewer adds value when
+the critic disputes evidence the conclusion currently relies on, such as an accounting change
+behind a rising margin. The rule is asymmetric on purpose: a critic restating evidence that already
+counts against the hypothesis cannot stop the run, because the report already shows that evidence.
+Deterministic escalation (source conflicts, calculations that do not reproduce) is unchanged.
+
 ## 7. Frozen fixtures for evaluation
 
 Benchmark cases run against payloads captured through the same `YFinanceTool` code path the live
@@ -141,8 +155,16 @@ category. Rubric judges are reported alongside deterministic scores, never inste
   checker misreads of free-form prose (fixed and covered by regression tests); new phrasings will
   still produce some false flags. Citations reduce this because they pin the comparison, and a
   flag always shows the sentence and the evidence so a reviewer can judge it.
-- The LLM critic escalated to human review in 3 of 6 live cases; its severity threshold may need
-  tightening.
+- The LLM-critic escalation rule (section 6) was written after reading the first 6 live cases, so
+  its effect there (3 of 3 LLM-only escalations removed) is in-sample. It was fixed before the other
+  12 live cases were inspected; replayed on them, it removed all 5 LLM-only escalations, and manual
+  reading found each one restated a recorded finding (one, an FY-versus-TTM gap described as a
+  "source conflict", is borderline). The rule kept high severity on issues that challenged
+  supporting evidence (two disagreeing PEG values, a margin "recovery" framed without its earlier
+  peak, segment attribution), but in those runs an earlier branch of the decision policy (iteration
+  limit, diminishing returns, insufficient evidence) decided first, so live LLM-triggered escalation under the new rule
+  has only been exercised by tests so far. The replay is exact for the decision but not for the
+  narrative, which sees the decision rationale.
 - Relative trends for amounts measured from a near-zero base (e.g. quarterly free cash flow)
   produce extreme percentages; they are correct arithmetic but easy to misread.
 - Yahoo Finance offers roughly four annual periods, no segment data, and undisclosed
