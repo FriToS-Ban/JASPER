@@ -49,6 +49,14 @@ class RubricScore(BaseModel):
     justification: str
 
 
+class RubricGrades(BaseModel):
+    """Grades for one research report on each rubric dimension (structured-output schema)."""
+
+    logical_coherence: RubricScore
+    verdict_justification: RubricScore
+    metric_relevance: RubricScore
+
+
 class RubricResult(BaseModel):
     judge: str
     scores: Dict[str, RubricScore]
@@ -115,8 +123,7 @@ class LLMRubricJudge:
         )
         user_prompt = json.dumps({"rubrics": RUBRICS, "report": view}, ensure_ascii=False, default=str)
         try:
-            content = self.llm._chat(system_prompt, user_prompt, operation="rubric_judge", json_mode=True)
-            payload = self.llm._parse_json(content)
+            payload = self.llm.structured_output(RubricGrades, system_prompt, user_prompt, operation="rubric_judge")
             scores = {k: RubricScore.model_validate(payload[k]) for k in RUBRICS}
         except (LLMError, ValidationError, KeyError, TypeError) as exc:
             return RubricResult(judge=self.name, scores={}, error=f"{type(exc).__name__}: {exc}")

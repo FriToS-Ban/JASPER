@@ -257,17 +257,25 @@ def action_key(action: RequiredAction) -> str:
     return _action_key(action)
 
 
-class _LLMIssue(BaseModel):
-    type: str = "LLM_CRITIC"
+class LLMCritiqueIssue(BaseModel):
+    """A problem the LLM critic found. Always recorded as an LLM_CRITIC issue."""
+
     severity: Literal["low", "medium", "high"] = "medium"
     description: str
-    metrics: List[str] = Field(default_factory=list)
+    metrics: List[str] = Field(default_factory=list, description="Metric keys from allowed_metrics.")
 
 
-class _LLMCritique(BaseModel):
-    issues: List[_LLMIssue] = Field(default_factory=list)
-    additional_metrics: List[str] = Field(default_factory=list)
+class LLMCritique(BaseModel):
+    """LLM critic output. Used as the structured-output schema and validated again on merge."""
+
+    issues: List[LLMCritiqueIssue] = Field(default_factory=list)
+    additional_metrics: List[str] = Field(default_factory=list, description="Metric keys from allowed_metrics.")
     notes: Optional[str] = None
+
+
+# Backwards-compatible names.
+_LLMIssue = LLMCritiqueIssue
+_LLMCritique = LLMCritique
 
 
 def merge_llm_critique(
@@ -282,7 +290,7 @@ def merge_llm_critique(
     if not payload:
         return None
     try:
-        critique = _LLMCritique.model_validate(payload)
+        critique = LLMCritique.model_validate(payload)
     except ValidationError as exc:
         return f"LLM critique rejected (schema): {exc.errors(include_url=False)[0]['msg']}"
     notes = [critique.notes] if critique.notes else []
