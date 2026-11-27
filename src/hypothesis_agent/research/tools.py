@@ -11,6 +11,7 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Literal, Optional, Type
 
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from hypothesis_agent.orchestration.yfinance_tools import YFINANCE_VERSION, YFinanceToolSet, describe_retrieval
@@ -110,6 +111,32 @@ class PlotArgs(_Args):
     frequency: Frequency = "annual"
 
 
+FINISH_TOOL = "finish"
+
+
+class FinishArgs(_Args):
+    reason: str = Field(default="", description="Why no further tool call would improve the test.")
+
+
+class ToolboxTool(StructuredTool):
+    """A LangChain tool that always executes through :meth:`ResearchToolbox.invoke`.
+
+    ``args_schema`` is the toolbox's argument model, so models see the exact schema the toolbox
+    enforces. LangChain would normally validate arguments before calling the function; this tool
+    passes them through untouched instead, so validation, the call budget, the ticker allow-list and
+    the call log stay in one place and a rejected call is logged like any other.
+    """
+
+    def _parse_input(self, tool_input: Any, tool_call_id: Optional[str]) -> Any:
+        if isinstance(tool_input, str):
+            try:
+                decoded = json.loads(tool_input)
+            except json.JSONDecodeError:
+                decoded = None
+            return decoded if isinstance(decoded, dict) else {"input": tool_input}
+        return dict(tool_input)
+
+
 class ToolCallRecord(BaseModel):
     call_id: str
     tool: str
@@ -199,6 +226,33 @@ class ResearchToolbox:
                     ("" if field.is_required() else f" (default {field.default})")
             described.append({"name": spec.name, "description": spec.description, "parameters": params})
         return described
+
+    def as_langchain_tools(
+        self, *, origin: str = "llm", rationale: Optional[str] = None, include_finish: bool = True,
+    ) -> List[StructuredTool]:
+        """LangChain tools for every tool spec (plus ``finish``), for binding to a chat model.
+
+        Each tool's ``args_schema`` is the spec's argument model and its function calls
+        :meth:`invoke`, so executing a tool through LangChain is validated, budgeted and logged
+        exactly like a direct call. It returns ``(json summary, ToolResult)`` as content and
+        artifact. ``finish`` only signals that the model wants to stop; it is never logged.
+        """
+
+        def make(spec: ToolSpec) -> StructuredTool:
+            def call(**arguments: Any) -> Any:
+                result = self.invoke(spec.name, arguments, origin=origin, rationale=rationale)
+                return json.dumps(result.model_dump(mode="json"), default=str), result
+
+            return ToolboxTool(name=spec.name, description=spec.description, args_schema=spec.args_model,
+                               func=call, response_format="content_and_artifact")
+
+        tools = [make(spec) for spec in self.specs.values()]
+        if include_finish:
+            tools.append(ToolboxTool(
+                name=FINISH_TOOL, args_schema=FinishArgs, func=lambda **_: "Finished: no further tool calls.",
+                description="Stop calling tools: the evidence collected so far is sufficient, or no remaining tool call would improve the test of the hypothesis.",
+            ))
+        return tools
 
     @property
     def calls_made(self) -> int:

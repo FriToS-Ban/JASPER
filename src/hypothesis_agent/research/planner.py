@@ -490,12 +490,28 @@ def revise_plan(
     return revision
 
 
-class _LLMExpectation(BaseModel):
-    concept: str
-    metric: Optional[str] = None
+class LLMExpectation(BaseModel):
+    """One expectation the hypothesis implies about a catalogue metric."""
+
+    concept: str = Field(description="The concept from the hypothesis being tested.")
+    metric: Optional[str] = Field(default=None, description="Catalogue metric key, or null if no catalogue metric can measure it.")
     direction: Direction
-    threshold: Optional[float] = None
+    threshold: Optional[float] = Field(default=None, description="Numeric threshold for above/below expectations, else null.")
     rationale: str = ""
+
+
+class PlanProposal(BaseModel):
+    """LLM planner output: expectations about catalogue metrics and extra catalogue metrics to collect.
+
+    Used as the structured-output schema for the LLM call. Each expectation is validated again by
+    :func:`build_plan`, which only lets proposals add concepts the phrase parser did not cover.
+    """
+
+    expectations: List[LLMExpectation] = Field(default_factory=list)
+    additional_metrics: List[str] = Field(default_factory=list, description="Catalogue metric keys only.")
+
+
+_LLMExpectation = LLMExpectation  # backwards-compatible name
 
 
 def _merge_llm_expectations(expectations: List[Expectation], proposal: Dict[str, Any]) -> Tuple[int, List[str]]:
@@ -504,7 +520,7 @@ def _merge_llm_expectations(expectations: List[Expectation], proposal: Dict[str,
     added = 0
     for raw in proposal.get("expectations", []) or []:
         try:
-            item = _LLMExpectation.model_validate(raw)
+            item = LLMExpectation.model_validate(raw)
         except ValidationError as exc:
             rejected.append(f"invalid schema ({exc.errors(include_url=False)[0]['msg']})")
             continue

@@ -233,6 +233,9 @@ class ResearchAgent:
     def _llm_tool_loop(self, request: HypothesisRequest, state: Dict[str, Any], plan: ResearchPlan,
                        registry: EvidenceRegistry, toolbox: ResearchToolbox) -> int:
         steps = 0
+        # LangChain tools for native function calling; the chosen call is still executed (validated,
+        # budgeted and logged) by toolbox.invoke below.
+        tools = toolbox.as_langchain_tools(origin="llm") if self.limits.max_llm_tool_steps else []
         for _ in range(self.limits.max_llm_tool_steps):
             briefing = {
                 "hypothesis": plan.hypothesis,
@@ -243,7 +246,11 @@ class ResearchAgent:
                 "recent_tool_calls": summarise_tool_log(state["tool_calls"]),
                 "remaining_calls": self.limits.max_tool_calls - toolbox.calls_made,
             }
-            action = self._llm_call(state, "choose_next_analysis_action", self.llm.choose_next_analysis_action, request, briefing)
+            choose = getattr(self.llm, "choose_next_tool_call", None)
+            if choose is None:  # adapter predating native tool calling
+                action = self._llm_call(state, "choose_next_analysis_action", self.llm.choose_next_analysis_action, request, briefing)
+            else:
+                action = self._llm_call(state, "choose_next_analysis_action", choose, request, briefing, tools)
             if not isinstance(action, dict) or action.get("tool") in {None, "finish", "stop"}:
                 break
             toolbox.invoke(str(action.get("tool")), action.get("arguments") or {}, origin="llm",

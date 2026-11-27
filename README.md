@@ -68,7 +68,8 @@ Key modules (all under `src/hypothesis_agent/`):
 | `research/metrics.py` | Canonical metric catalogue shared by every component (fields, units, categories, synonyms, formulas) |
 | `research/extraction.py` | yfinance payload to evidence records |
 | `research/analytics.py` | Ratios, growth, CAGR, trends, price metrics, valuation, correlation, and `recompute()` for every derivation |
-| `research/tools.py` | `ResearchToolbox`: pydantic-validated tool calls, ticker allow-list, call budget, deduplicated fetches, call log |
+| `research/tools.py` | `ResearchToolbox`: pydantic-validated tool calls, ticker allow-list, call budget, deduplicated fetches, call log; `as_langchain_tools()` exposes the same tools to LangChain |
+| `llm.py` | `NvidiaLLM` on LangChain (`ChatOpenAI` against NVIDIA NIM): pydantic structured output for plan proposals, critique, narrative and report; native function calling for tool choice |
 | `research/planner.py` | Hypothesis to testable expectations and a versioned, revisable plan |
 | `research/assessment.py` | Rule-based evaluation of each expectation and the verdict |
 | `research/critique.py` | Structured critique issues, required actions and the branching decision |
